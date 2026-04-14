@@ -5,7 +5,7 @@ Vibronic spectra toolkit based on Huang–Rhys theory.
 ## Installation
 
 ```bash
-git clone https://github.com/<your-username>/plumipy.git
+git clone https://github.com/m-singhal/plumipy.git
 cd plumipy
 python -m venv plumipy-env
 source venv/bin/activate   # mac/linux
