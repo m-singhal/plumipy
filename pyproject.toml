@@ -1,0 +1,19 @@
+[project]
+name = "plumipy"
+version = "0.1.0"
+description = "Vibronic spectra toolkit"
+authors = [{name = "Mridul Singhal"}]
+dependencies = [
+    "numpy",
+    "h5py",
+    "streamlit",
+    "plotly"
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["plumipy*"]
+exclude = ["app*"]

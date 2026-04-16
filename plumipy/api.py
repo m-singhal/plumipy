@@ -1,6 +1,6 @@
 import numpy as np
 from pathlib import Path
-from photoluminescence import Photoluminescence
+from .photoluminescence import Photoluminescence
 
 def calculate_spectra_analytical(
         structure_gs: Path | np.ndarray | None, # Ground state structure, either as a file path or a numpy array. If a file path is provided, the function will determine the file type based on the extension and load it accordingly. Supported file types include .npy, .npz, .txt, .dat, and common structure file formats like POSCAR/CONTCAR.

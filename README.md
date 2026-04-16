@@ -1,21 +1,24 @@
 # PLUMIPY
 
-Vibronic spectra toolkit based on Huang–Rhys theory.
+Vibronic spectra toolkit based on Huang–Rhys theory and beyond.
 
-## Installation
+- 🖥️ Interactive GUI (Streamlit app)
+- 🐍 Python package (for scripting and HPC workflows)
+
+# Installation - App
 
 ```bash
 git clone https://github.com/m-singhal/plumipy.git
 cd plumipy
 python -m venv plumipy-env
-source venv/bin/activate   # mac/linux
+source plumipy-env/bin/activate   # mac/linux
 pip install -r requirements.txt
 ```
 
 ## Running the app
 
 ```bash
-cd plumipy
+cd plumipy/app
 streamlit run app.py
 ```
 
@@ -274,5 +277,35 @@ if data["squeezed"] is not None:
     - Arrays are NumPy-compatible  
 
     👉 This enables full flexibility for custom analysis and plotting.
+
+---
+
+# Installation - Python package
+```bash
+git clone https://github.com/m-singhal/plumipy.git
+cd plumipy
+python -m venv plumipy-env
+source plumipy-env/bin/activate   # mac/linux
+pip install -e .
+```
+
+## Usage
+```python
+from plumipy import calculate_spectra_analytical
+from plumipy import load_hdf5_results
+
+results = calculate_spectra_analytical(...)
+data = load_hdf5_results("spectra_output.h5")
+```
+
+### For full details of inputs and available options, see:
+👉 plumipy/api.py
+
+### or inspect directly in Python:
+```python
+from plumipy import calculate_spectra_analytical
+help(calculate_spectra_analytical)
+```
+
 
 

@@ -1,11 +1,13 @@
 import streamlit as st
 import numpy as np
 import tempfile
-import os
 import plotly.graph_objects as go
 import io
 import h5py
-from api import calculate_spectra_analytical
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from plumipy import calculate_spectra_analytical
 
 st.set_page_config(layout="wide", page_title="Plumipy")
 st.title("PLUMIPY")
