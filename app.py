@@ -261,11 +261,33 @@ if run:
         hdf5_buffer = io.BytesIO()
 
         with h5py.File(hdf5_buffer, "w") as f:
+
+            def save_item(group, key, value):
+
+                # --- dictionary ---
+                if isinstance(value, dict):
+                    subgroup = group.create_group(key)
+                    for subkey, subval in value.items():
+                        save_item(subgroup, subkey, subval)
+
+                # --- numpy array ---
+                elif isinstance(value, np.ndarray):
+                    group.create_dataset(key, data=value)
+
+                # --- scalar (float/int) ---
+                elif isinstance(value, (int, float, np.number)):
+                    group.create_dataset(key, data=value)
+
+                # --- fallback ---
+                else:
+                    try:
+                        group.create_dataset(key, data=np.array(value))
+                    except Exception:
+                        print(f"Skipped: {key}")
+
+            # save everything
             for key, value in results.items():
-                try:
-                    f.create_dataset(key, data=value)
-                except Exception:
-                    pass
+                save_item(f, key, value)
 
         hdf5_buffer.seek(0)
 
