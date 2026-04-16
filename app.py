@@ -3,7 +3,8 @@ import numpy as np
 import tempfile
 import os
 import plotly.graph_objects as go
-
+import io
+import h5py
 from api import calculate_spectra_analytical
 
 st.set_page_config(layout="wide", page_title="Plumipy")
@@ -246,10 +247,27 @@ if run:
             enable_squeezing=enable_squeezing,
             sigma_squeezed=sigma_sq,
             gamma_squeezed=gamma_sq,
-            save_to_hdf5=save_hdf5
+            save_to_hdf5=False
         )
 
     st.success("Done")
+
+    # =========================
+    # CREATE HDF5 IN MEMORY
+    # =========================
+    hdf5_buffer = None
+
+    if save_hdf5:
+        hdf5_buffer = io.BytesIO()
+
+        with h5py.File(hdf5_buffer, "w") as f:
+            for key, value in results.items():
+                try:
+                    f.create_dataset(key, data=value)
+                except Exception:
+                    pass
+
+        hdf5_buffer.seek(0)
 
     # =========================
     # STANDARD HR
@@ -453,12 +471,11 @@ if run:
     # =========================
     # DOWNLOAD
     # =========================
-    if save_hdf5 and os.path.exists("spectra_output.h5"):
+    if save_hdf5 and hdf5_buffer is not None:
 
-        with open("spectra_output.h5", "rb") as f:
-            st.download_button(
-                label="Download HDF5",
-                data=f,
-                file_name="spectra_output.h5",
-                mime="application/octet-stream"
+        st.download_button(
+            label="Download HDF5",
+            data=hdf5_buffer,
+            file_name="spectra_output.h5",
+            mime="application/octet-stream"
         )

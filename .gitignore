@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 outputs/
 spectra_output.h5
+.DS_Store
