@@ -217,6 +217,181 @@ if not run:
 
     st.info("👉 Start by selecting inputs from the sidebar and click **Run**.")
 
+    # =========================
+    # OUTPUTS OVERVIEW
+    # =========================
+    st.markdown("---")
+    st.markdown("## 📦 Outputs and Data Structure")
+
+    with st.expander("📘 Complete Output Specification", expanded=False):
+
+        st.markdown("""
+    PLUMIPY returns all computed quantities as a structured dictionary.  
+    When exporting to HDF5, this structure is preserved and can be accessed directly.
+
+    ---
+
+    ## ⚙️ Output Availability (Important)
+
+    Outputs depend on selected inputs:
+
+    - **Structures (GS + ES)** → Geometry + adiabatic PES
+    - **Forces** → Vertical gradient approximation
+    - **Phonons / Vibrations (GS)** → Mode-resolved quantities
+    - **Phonons / Vibrations (ES)** → Required for squeezing
+    - **ZPL provided** → Enables spectra (standard HR)
+    - **Enable Squeezing = True** → Enables squeezed outputs (requires GS + ES phonons)
+
+    ---
+
+    ## 🔬 Core Quantity
+
+    - `data["hbar"]`  
+    Reduced Planck constant  
+    Units: √(meV · amu) · Å  
+
+    ---
+
+    ## 🧱 Geometry & Structure
+
+    - `data["R_gs"]` → (N_atoms, 3), Å  
+    - `data["R_es"]` → (N_atoms, 3), Å  
+    - `data["atoms"]` → atomic species  
+
+    ---
+
+    ## ⚡ Forces (if provided)
+
+    - `data["F_gs"]` → (N_atoms, 3), eV/Å  
+    - `data["F_es"]` → (N_atoms, 3), eV/Å  
+
+    ---
+
+    ## ⚖️ Atomic Masses
+
+    - `data["masses"]` → (N_atoms,), amu  
+
+    ---
+
+    ## 🎵 Phonons (Ground State)
+
+    - `data["freqs_gs"]`  
+    - `data["modes_gs"]`  
+    - `data["Ek_gs"]`  
+    - `data["wk_gs"]`  
+    - `data["IPR_gs"]`  
+
+    ---
+
+    ## 🎵 Phonons (Excited State)
+
+    - `data["freqs_es"]`  
+    - `data["modes_es"]`  
+    - `data["Ek_es"]`  
+    - `data["wk_es"]`  
+    - `data["IPR_es"]`  
+
+    If not provided → ground-state values are reused  
+
+    ---
+
+    ## 🔗 Electron–Phonon Coupling
+
+    - `data["qk"]`  
+    - `data["Sk"]`  
+    - `data["HR"]`  
+
+    ---
+
+    ## 🌈 Standard Huang–Rhys Spectra  
+    (Available when ZPL is provided)
+    """)
+
+        st.code("""
+    std = data["standard_hr"]
+
+    S_E = std["S_E"]
+    E_ph = std["E_phonons"]
+
+    G_t = std["G_t"]
+    t = std["t_fs"]
+
+    E_em = std["E_photon_emission"]
+    I_em = std["I_emission"]
+
+    E_abs = std["E_photon_absorption"]
+    I_abs = std["I_absorption"]
+    """, language="python")
+
+        st.markdown("""
+    ---
+
+    ## 🌀 Displaced–Squeezed Model  
+    (Enable Squeezing = True + ES phonons required)
+    """)
+
+        st.code("""
+    sq = data["squeezed"]
+
+    rk = sq["rk"]
+
+    G_t_em = sq["G_t_emission"]
+    G_t_abs = sq["G_t_absorption"]
+
+    E_em = sq["E_photon_emission"]
+    E_abs = sq["E_photon_absorption"]
+
+    I_em = sq["I_emission"]
+    I_abs = sq["I_absorption"]
+
+    nk_em = sq["nk_mean_emission"]
+    nk_abs = sq["nk_mean_absorption"]
+
+    S_E_em = sq["S_E_emission"]
+    S_E_abs = sq["S_E_absorption"]
+    """, language="python")
+
+    # =========================
+    # HDF5 USAGE
+    # =========================
+    with st.expander("💾 Using HDF5 Output (for analysis)", expanded=False):
+
+        st.markdown("### 📥 Step 1: Load file")
+
+        st.code("""
+    data = load_hdf5_results("spectra_output.h5")
+    """, language="python")
+
+        st.markdown("### 📊 Step 2: Access data")
+
+        st.code("""
+    Sk = data["Sk"]
+    Ek = data["Ek_gs"]
+
+    std = data["standard_hr"]
+    I_em = std["I_emission"]
+    """, language="python")
+
+        st.markdown("### 🌀 Step 3: Access squeezed (if enabled)")
+
+        st.code("""
+    if data["squeezed"] is not None:
+        sq = data["squeezed"]
+        I_sq = sq["I_emission"]
+    """, language="python")
+
+        st.markdown("""
+    ---
+
+    ### 📌 Notes
+    - Structure mirrors the results dictionary  
+    - Not all keys are always present  
+    - Energies are in **meV**  
+    - Arrays are NumPy-compatible  
+
+    👉 This enables full flexibility for custom analysis and plotting.
+    """)
+        
 # =========================
 # RUN
 # =========================
