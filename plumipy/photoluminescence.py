@@ -112,7 +112,7 @@ class ReadFiles:
           index_init = lines.index("Eigenvectors and eigenvalues of the dynamical matrix")
           index_final = next(
     i for i, line in enumerate(lines)
-    if "Finite differences POTIM=" in line
+    if "Finite differences POTIM=" in line or "ELASTIC MODULI CONTR FROM IONIC RELAXATION (kBar)" in line
 )
 
 
