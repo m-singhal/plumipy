@@ -94,8 +94,9 @@ with st.sidebar.expander("Parameters", expanded=True):
         sidebands_broadening_lorentzian = False
     else: 
         sidebands_broadening_lorentzian = True
-    sigma = st.number_input("Sigma (meV)", value=3.0)
-    st.caption("Homogenous broadening of the sidebands")
+    sigma_init = st.number_input("Sigma 1 (meV)", value=3.0)
+    sigma_final = st.number_input("Sigma 2 (meV)", value=3.0)
+    st.caption("Variable sideband broadening as a linear function of phonon energies, (Sigma 1 - lowest energy phonon to Sigma 2 - highest energy phonon). Homogenous for Sigma 1 = Sigma 2")
     gamma = st.number_input("Gamma (meV)", value=2.0)
     st.caption("Homogenous broadening of the entire spectra")
     calculation_type = ["Adiabatic PES Approximation ('Structures tag')", "Vertical Gradient Approximation ('Forces tag')"]
@@ -434,7 +435,8 @@ if run:
             masses=save_file(masses),
             qk_calculation_type=qk_type,
             zpl=zpl,
-            sigma=sigma,
+            sigma_init=sigma_init,
+            sigma_final=sigma_final,
             gamma=gamma,
             sidebands_broadening_lorentzian=sidebands_broadening_lorentzian,
             vibrational_freqs_unit=units,

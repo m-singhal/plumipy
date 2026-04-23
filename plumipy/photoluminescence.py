@@ -278,7 +278,7 @@ class Photoluminescence(ReadFiles):
     """
     return (2*np.pi*freqs*(qk**2))/(2*0.6582*9.646)
 
-  def SpectralFunction(self, Sk, Ek, E_meV_positive, sigma = 6, Lorentz = False):
+  def SpectralFunction(self, Sk, Ek, E_meV_positive, sigma_init, sigma_final=None, Lorentz = False):
 
     """
     Calculates S(hbar_omega) or S(E) (unit less) by using Gaussian or Lorentzian fit
@@ -286,11 +286,16 @@ class Photoluminescence(ReadFiles):
 
     Ek: Normal mode phonon energies.
     """
-    self.sigma = sigma
-    if Lorentz == False:
-      S_E = np.array([np.dot(Sk,self.Gaussian(i,Ek,sigma)) for i in E_meV_positive])
+    self.sigma = sigma_init
+    if sigma_final is not None:
+      sigma_k = sigma_init + (sigma_final - sigma_init)*((Ek - Ek.min())/(Ek.max() - Ek.min()))
     else:
-      S_E = np.array([np.dot(Sk,self.Lorentzian(i,Ek,sigma)) for i in E_meV_positive])
+      sigma_k = sigma_init
+    
+    if Lorentz == False:
+      S_E = np.array([np.dot(Sk,self.Gaussian(i,Ek,sigma_k)) for i in E_meV_positive])
+    else:
+      S_E = np.array([np.dot(Sk,self.Lorentzian(i,Ek,sigma_k)) for i in E_meV_positive])
     return S_E
 
   def FourierSpectralFunction(self, Sk, Ek, S_E, E_meV_positive):

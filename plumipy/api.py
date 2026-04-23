@@ -16,7 +16,8 @@ def calculate_spectra_analytical(
         masses: Path | np.ndarray | None, # Atomic masses, either as a file path or a numpy array. If a file path is provided, the function will determine the file type based on the extension and load it accordingly. Supported file types include .npy, .npz, .txt, and .dat. Units: atomic mass units (amu). Dimesion: (N_atoms,)
         qk_calculation_type: str | None, # Method to calculate the displacement between the ground state and excited state adiabatic potential energy surface minima. 'r' for coordinate-based calculation using the difference in geometries, and 'f' for force-based calculation using the difference in forces. This will determine how the Huang-Rhys factors are calculated, which in turn affects the resulting spectra.
         zpl: float | None, # Zero-phonon line energy in meV or 0-0 transition in molecules. This is the energy of the electronic transition without any phonon/vibrational modes involvement and serves as a reference point for the spectra.
-        sigma: float | None, # Gaussian/Lorentzian broadening of phonon sidebands in meV.
+        sigma_init: float | None, # Gaussian/Lorentzian broadening of phonon sidebands in meV. sigma_init and sigma_final will make the broadening linearly dependent on phonon energies.
+        sigma_final: float | None, # Gaussian/Lorentzian broadening of phonon sidebands in meV. sigma_init and sigma_final will make the broadening linearly dependent on phonon energies. If None is given then sigma_init is used as homogenous broadening.
         gamma: float | None, # Lorentzian broadening of emission lines in meV.
         sidebands_broadening_lorentzian: bool = False, # Whether to use Lorentzian broadening for phonon sidebands/vibrational progressions instead of Gaussian.
         vibrational_freqs_unit: str = "cm^-1", # Unit of the vibrational frequencies provided by the user. Supported units include "cm^-1" and "THz". The function will convert the frequencies to a consistent unit (meV) for internal calculations. This parameter is only relevant if vibrational frequencies are provided. 
@@ -379,7 +380,7 @@ def calculate_spectra_analytical(
         '''
         standard_hr = {}
         E_phonons = pl.IV(0, Emax, tmax_meV)
-        S_E = pl.SpectralFunction(results["Sk"], results["Ek_gs"], E_phonons, sigma, Lorentz=sidebands_broadening_lorentzian)
+        S_E = pl.SpectralFunction(results["Sk"], results["Ek_gs"], E_phonons, sigma_init, sigma_final, Lorentz=sidebands_broadening_lorentzian)
         t_meV, S_t, _ = pl.FourierSpectralFunction(results["Sk"], results["Ek_gs"], S_E, E_phonons)
         G_t = pl.GeneratingFunction(results["Sk"], S_t, t_meV, results["Ek_gs"], E_phonons, temperature)
         
