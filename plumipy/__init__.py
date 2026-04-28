@@ -16,10 +16,12 @@ Main entry points:
 
 from .api import calculate_spectra_analytical
 from .io import load_hdf5_results
+from .photoluminescence import Photoluminescence
 
 __all__ = [
     "calculate_spectra_analytical",
     "load_hdf5_results",
+    "Photoluminescence",
 ]
 
 __version__ = "0.1.0"
