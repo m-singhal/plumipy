@@ -212,10 +212,7 @@ def calculate_spectra_analytical(
                 freqs_gs = freqs_gs[:int(freqs_gs.shape[0]/2)]
                 modes_gs = modes_gs[:int(modes_gs.shape[0]/2),...]
             else:
-                if "atoms" not in results:
-                    raise ValueError("Atoms information is required to load phonons from a non-YAML file. It can be produced only by using POSCAR/CONTCAR files to load structures.")
-                else:
-                    masses, freqs_gs, modes_gs = pl.ReadPhononsVasp(phonons_gs, results["atoms"])
+                masses, freqs_gs, modes_gs = pl.ReadPhononsVasp(phonons_gs)
             freqs_gs[freqs_gs <= 0] = 1e-6  ## Replace zero or negative frequencies with a small positive value to avoid issues in calculations
             results["masses"] = masses  ## Units: atomic mass units (amu), an array of shape (N_atoms,)
             results["freqs_gs"] = freqs_gs[subtract_modes:]  ## Units: THz
@@ -232,10 +229,7 @@ def calculate_spectra_analytical(
                 freqs_es = freqs_es[:int(freqs_es.shape[0]/2)]
                 modes_es = modes_es[:int(modes_es.shape[0]/2),...]
             else:
-                if "atoms" not in results:
-                    raise ValueError("Atoms information is required to load phonons from a non-YAML file. It can be produced only by using POSCAR/CONTCAR files to load structures.")
-                else:
-                    masses, freqs_es, modes_es = pl.ReadPhononsVasp(phonons_es, results["atoms"])
+                masses, freqs_es, modes_es = pl.ReadPhononsVasp(phonons_es)
             freqs_es[freqs_es <= 0] = 1e-6  ## Replace zero or negative frequencies with a small positive value to avoid issues in calculations
             results["masses"] = masses  ## Units: atomic mass units (amu), an array of shape (N_atoms,)
             results["freqs_es"] = freqs_es[subtract_modes:]  ## Units: THz

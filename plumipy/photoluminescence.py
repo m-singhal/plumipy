@@ -82,12 +82,12 @@ class ReadFiles:
     normal_modes = np.array([[[float(x.strip(',')) for x in sublist] for sublist in outer] for outer in normal_modes])
     return atomic_masses, freqs, normal_modes
 
-  def ReadPhononsVasp(self, path, atoms):
+  
+  def ReadPhononsVasp(self, path):
 
     """
     From VASP OUTCAR.
     Input:   1. path: Location of band.yaml file as a string.
-             2. atoms: Dictionary of atomic species and there corresponding number of atoms.
 
     Outputs:  1.Atomic_masses is a 1D array of masses (AMU) of each atom in the same sequence as
                 that of Atomic positions in previous function.
@@ -98,38 +98,54 @@ class ReadFiles:
 
     freqs = []
     normal_modes = []
-    number_of_atoms = np.array([i[1] for i in atoms.items()])
-    total_atoms = np.sum(number_of_atoms)
-
 
     with open(path, 'r') as file:
-          lines = [line.strip() for line in file]
+        lines = [line.strip() for line in file]
 
-          index = lines.index("Mass of Ions in am")
-          atomic_masses = lines[index + 1].split()[2:]
-          atomic_masses = np.array(atomic_masses).astype(float)
+    # --- get masses ---
+    mass_idx = lines.index("Mass of Ions in am")
+    atomic_masses = np.array(lines[mass_idx + 1].split()[2:], dtype=float)
 
-          index_init = lines.index("Eigenvectors and eigenvalues of the dynamical matrix")
-          index_final = next(
-    i for i, line in enumerate(lines)
-    if "Finite differences POTIM=" in line or "ELASTIC MODULI CONTR FROM IONIC RELAXATION (kBar)" in line
-)
+    # --- get number of atoms per type ---
+    ions_line = [l for l in lines if "ions per type" in l][0]
+    number_of_atoms = np.array(ions_line.split('=')[1].split(), dtype=int)
 
+    total_atoms = np.sum(number_of_atoms)
 
-          for i in range(index_init, index_final + 1):
-            internal_modes = []
-            if "THz" in lines[i]:
-              freqs.append(lines[i].split()[lines[i].split().index("THz") - 1])
-              internal_modes = [lines[j].split() for j in range(i + 2, i + 2 + total_atoms)]
-              normal_modes.append(internal_modes)
+    # --- expand masses correctly ---
+    atomic_masses_full = np.repeat(atomic_masses, number_of_atoms)
 
-    atomic_masses = np.repeat(atomic_masses, number_of_atoms)
-    freqs = np.array(freqs).astype(float)
+    # --- locate phonon block ---
+    index_init = lines.index("Eigenvectors and eigenvalues of the dynamical matrix")
+
+    index_final = next(
+        i for i, line in enumerate(lines)
+        if "Finite differences POTIM=" in line
+        or "ELASTIC MODULI CONTR FROM IONIC RELAXATION" in line
+    )
+
+    # --- parse modes ---
+    for i in range(index_init, index_final + 1):
+        if "THz" in lines[i]:
+            freq = float(lines[i].split()[lines[i].split().index("THz") - 1])
+            freqs.append(freq)
+
+            mode_block = [
+                lines[j].split()
+                for j in range(i + 2, i + 2 + total_atoms)
+            ]
+            normal_modes.append(mode_block)
+
+    freqs = np.array(freqs, dtype=float)
+    normal_modes = np.array(normal_modes, dtype=float)[..., 3:]
+
+    # --- sort ---
     sort = np.argsort(freqs)
     freqs = freqs[sort]
-    normal_modes = np.array(normal_modes).astype(float)[...,3:]
     normal_modes = normal_modes[sort]
-    return atomic_masses, freqs, normal_modes
+
+    return atomic_masses_full, freqs, normal_modes
+  
 
   def ReadForces(self, path):
 
