@@ -27,6 +27,7 @@ def calculate_spectra_analytical(
         squeezing_parameter: np.ndarray | None = None, # Squeezing parameter for the more general theory that takes into account the displacement and curvature changes between the ground state and excited state potential energy surfaces. This can result in same spectra as the standard Huang-Rhys theory if the vibrational/phonon frequencies of the ground state and excited state are the same. Units: dimensionless, an array of shape (N_modes,). But usuallt this is not required as it will be calculated automatically. This is just for testing the changes in spectra with user defined squeezing parameters.
         sigma_squeezed: float | None = None, # Gaussian/Lorentzian broadening for the more general formalism that takes into account the displacement and curvature changes between the ground state and excited state potential energy surfaces. This can result in same spectra as the standard Huang-Rhys theory if the vibrational/phonon frequencies of the ground state and excited state are the same.
         gamma_squeezed: float | None = None, # Lorentzian broadening for the more general formalism that takes into account the displacement and curvature changes between the ground state and excited state potential energy surfaces. This can result in same spectra as the standard Huang-Rhys theory if the vibrational/phonon frequencies of the ground state and excited state are the same.
+        monte_carlo_emission: bool = False, # Use this especially for high Total Huang-Rhys factor where the default (generating function) approach becomes numerically unstable. Get I_emission within standard Huang-Rhys theory with Monte-Carlo sampling of phonons from Poisson distribution.
         save_to_hdf5: bool = False, # Whether to save the results to an HDF5 file for easier loading and analysis in the future. The file will be saved in the current working directory with a name based on the input parameters and a timestamp to ensure uniqueness.
         ):
     
@@ -84,6 +85,19 @@ def calculate_spectra_analytical(
         - "E_photon_absorption": Absorption photon energies, shape (N_photon_energies,), units: meV.
         - "A_E_absorption": Absorption spectral function, arbitrary units.
         - "I_absorption": Absorption intensity (normalized), arbitrary units.
+
+    Monte-Carlo sampled emission spectra (only if monte_carlo_emission=True):
+    - "monte_carlo_emission": Dictionary containing:
+        - "E_photon_emission": Emission photon energies, shape (N_photon_energies,), units: meV.
+        - "I_emission": Emission intensity, shape (N_photon_energies,), arbitrary units.
+        - "mean": Mean of Photon energy distribution, scalar, units: meV.
+        - "median": Median of Photon energy distribution, scalar, units: meV.
+        - "mode": Mode of Photon energy distribution, scalar, units: meV.
+        - "var": Variance of Photon energy distribution, scalar, units: meV^2.
+        - "std": Standard deviation of Photon energy distribution, scalar, units: meV.
+        - "skewness": Skewness of Photon energy distribution, scalar, dimensionless.
+        - "kurtosis": Excess Kurtosis of Photon energy distribution, scalar, dimensionless.
+
 
     Squeezed (displaced-squeezed oscillator model):
     - "squeezed": Either None or a dictionary (if enable_squeezing=True) containing:
@@ -404,6 +418,17 @@ def calculate_spectra_analytical(
         standard_hr["I_absorption"] = I_absorption ## Units: arb. units, an array of shape (N_photon_energies,)
         results["standard_hr"] = standard_hr
 
+
+        '''
+        Monte Carlo sampling method will give the PL spectra even in high HR factor regime where the generating function approach becomes numerically unstable. One can also check its convergence with 
+        results["standard_hr"]["I_emission"]. It is recommended to use the bar plot for Monte Carlo results. It uses Gaussian broadening with sigma = gamma (user input).
+        plt.bar(results["monte_carlo_emission"]["E_photon_emission"], results["monte_carlo_emission"]["I_emission"], width = results["monte_carlo_emission"]["E_photon_emission"][1] - results["monte_carlo_emission"]["E_photon_emission"][0]) 
+
+        Gives mean, median, mode, variance, standard deviation, skewness, and excess kurtosis of the emission spectrum calculated from Monte Carlo sampling. This can be useful for understanding the distribution of photon energies and intensities in the emission spectrum, especially in cases with high Huang-Rhys factors where the spectrum can be broad and complex.
+        '''
+        if monte_carlo_emission:
+            E_monte_carlo_emission, I_monte_carlo_emission, mean, median, mode, var, std, skewness, excess_kurtosis = pl.monte_carlo_sampling(zpl=zpl, Sk=results["Sk"], Ek=results["Ek_gs"], sigma=gamma)
+            results["monte_carlo_emission"] = {"E_photon_emission": E_monte_carlo_emission, "I_emission": I_monte_carlo_emission, "mean": mean, "median": median, "mode": mode, "variance": var, "std": std, "skewness": skewness, "kurtosis": excess_kurtosis}
 
         '''
         Luminescence and absorption under a more general formalism that takes into account the displacement and curvature changes between the ground state and excited state potential energy surfaces. 

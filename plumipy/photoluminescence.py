@@ -433,6 +433,48 @@ class Photoluminescence(ReadFiles):
     IPR = 1/np.einsum("ij -> i", p**2)
     return IPR
   
+  def monte_carlo_sampling(self, zpl, Sk, Ek, sigma, n_samples=100000):
+     Sk = np.array(Sk)
+     Ek = np.array(Ek)
+
+     # Sample phonon numbers: shape (n_samples, n_modes)
+     nk = np.random.poisson(lam=Sk, size=(n_samples, len(Sk)))
+
+     # Total emitted phonon energy per sample
+     E_loss = np.dot(nk, Ek)
+
+     # Photon energies
+     E_photon = zpl - E_loss
+     E_photon = E_photon + np.random.normal(0, sigma, len(E_photon))
+     hist, bins = np.histogram(E_photon, bins=500, density=True)
+     bin_centers = 0.5*(bins[:-1] + bins[1:])
+
+     # --- central tendency ---
+     mean = np.mean(E_photon)
+     median = np.median(E_photon)
+     mode = bin_centers[np.argmax(hist)]
+
+     # --- spread ---
+     var = np.var(E_photon)
+     std = np.std(E_photon)
+
+     # --- higher moments ---
+     centered = E_photon - mean
+     m2 = np.mean(centered**2)
+     m3 = np.mean(centered**3)
+     m4 = np.mean(centered**4)
+
+     # skewness (Pearson moment coefficient)
+     skewness = m3 / (m2**1.5)
+
+     # kurtosis (Pearson, not excess)
+     kurtosis = m4 / (m2**2)
+
+     # excess kurtosis (more commonly reported)
+     excess_kurtosis = kurtosis - 3
+
+     return bin_centers, hist, mean, median, mode, var, std, skewness, excess_kurtosis
+  
   @staticmethod
   def anharmonic_coefficients(F_es, F_gs, modes, masses, wk, qk):
      """

@@ -31,6 +31,7 @@ streamlit run app.py
 - For solids and molecules  
 - Supports standard Huang–Rhys theory  
 - Beyond Huang–Rhys: Independent-mode displaced–squeezed harmonic oscillator approximation  
+- Deals with large Huang Rhys Factor by using Monte-Carlo Sampling (only for emission spectra)
 - Integrates seamlessly with:
   - VASP (CONTCAR, OUTCAR)  
   - Phonopy (band.yaml)  
@@ -197,6 +198,29 @@ E_abs = std["E_photon_absorption"]  # (N_photon,), meV
 I_abs = std["I_absorption"]         # arbitrary units
 ```
 ---
+
+## 🎲 Monte Carlo Sampling - Emission
+*(Available when ZPL is provided and monte_carlo_emission=True)*
+- Use this especially for high Total Huang-Rhys factor where the default (generating function) approach becomes numerically unstable. Get I_emission within standard Huang-Rhys theory with Monte-Carlo sampling of phonons from Poisson distribution.
+
+```python
+mc = data["monte_carlo_emission"]
+
+E_em = mc["E_photon_emission"]       # (N_E,), meV
+I_em = mc["I_emission"]              # (N_E,), arbitrary units
+
+mean = mc["mean"]                    # meV
+median = mc["median"]                # meV
+mode = mc["mode"]                    # meV
+
+var = mc["var"]
+std = mc["std"]
+
+skewness = mc["skewness"]
+kurtosis = mc["kurtosis"]            # Excess kurtosis
+```
+---
+
 ## 🌀 Displaced–Squeezed Model  
 *(Enable Squeezing = True + ES phonons required)*
 

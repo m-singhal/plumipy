@@ -88,6 +88,10 @@ with st.sidebar.expander("Parameters", expanded=True):
 
     zpl = st.number_input("ZPL (meV)", value=1000.0)
     st.caption("Zero phonon line/0-0 transition energy in molecules")
+
+    bool_monte_carlo = st.checkbox("Monte Carlo Sampling", value=True)
+    st.caption("Keep it switched on specially for large Total Huang-Rhys factor.")
+
     broadening_type = ["Gaussian", "Lorentzian"]
     sidebands_broadening_lorentzian = st.selectbox("Type of broadening", broadening_type)
     if sidebands_broadening_lorentzian == broadening_type[0]:
@@ -140,6 +144,7 @@ if not run:
     - For solids and molecules
     - Supports standard Huang–Rhys theory
     - Going beyond the Huang-Rhys theory: The Independent mode displaced-squeezed harmonic oscillator approximation
+    - Deals with large Huang Rhys Factor by using Monte-Carlo Sampling (only for emission spectra)
     - Integrates seamlessly with VASP output files - CONTCAR, OUTCAR and Phonopy - band.yaml
     - Integrates to other Density Functional theory codes via external parsers and NumPy
     - Temperature-dependent spectra
@@ -325,10 +330,35 @@ if not run:
     E_abs = std["E_photon_absorption"]
     I_abs = std["I_absorption"]
     """, language="python")
+    
 
         st.markdown("""
     ---
+                    
+    ## 🎲 Monte Carlo Sampling - Emission  
+    (Monte Carlo Sampling = True)
+    """)
+        
+        st.code("""
+    mc = data["monte_carlo_emission"]
 
+    E_em = mc["E_photon_emission"]
+    I_em = mc["I_emission"]
+
+    mean = mc["mean"]
+    median = mc["median"]
+    mode = mc["mode"]
+
+    var = mc["var"]
+    std = mc["std"]
+
+    skewness = mc["skewness"]
+    kurtosis = mc["kurtosis"]
+    """, language="python")
+
+        st.markdown("""
+    ---
+                    
     ## 🌀 Displaced–Squeezed Model  
     (Enable Squeezing = True + ES phonons required)
     """)
@@ -445,6 +475,7 @@ if run:
             enable_squeezing=enable_squeezing,
             sigma_squeezed=sigma_sq,
             gamma_squeezed=gamma_sq,
+            monte_carlo_emission=bool_monte_carlo,
             save_to_hdf5=False
         )
 
@@ -543,20 +574,67 @@ if run:
         # Plot 2: Emission
         fig2 = go.Figure()
 
+        # --- Analytical (existing) ---
         fig2.add_trace(go.Scatter(
             x=std["E_photon_emission"],
             y=np.real(std["I_emission"]),
-            line=dict(color="royalblue"),
-            name="Emission"
+            line=dict(color="royalblue", width=2),
+            name="Analytical"
         ))
 
+        # --- Monte Carlo (new) ---
+        if "monte_carlo_emission" in results:
+
+            mc = results["monte_carlo_emission"]
+
+            E_mc = mc["E_photon_emission"]
+            I_mc = mc["I_emission"]
+
+            # bin width (robust)
+            width = np.mean(np.diff(E_mc))
+
+            fig2.add_trace(go.Bar(
+                x=E_mc,
+                y=I_mc,
+                width=width,
+                name="Monte Carlo",
+                marker=dict(
+                    color="crimson",
+                    opacity=0.5
+                )
+            ))
+
+        # --- Layout ---
         fig2.update_layout(
-            title="Emission Spectra",
+            title="Emission Spectra (Analytical vs Monte Carlo)",
             xaxis=dict(title="Photon Energy (meV)"),
-            yaxis=dict(title="PL (arb. units)")
+            yaxis=dict(title="PL (arb. units)"),
+            barmode="overlay"   # IMPORTANT: overlay bars + line
         )
 
         st.plotly_chart(fig2, use_container_width=True)
+
+        if "monte_carlo_emission" in results:
+
+            mc = results["monte_carlo_emission"]
+
+            st.markdown("---")
+            st.markdown("## 🎲 Monte Carlo Statistics")
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.metric("Mean (meV)", f"{mc['mean']:.2f}")
+                st.metric("Median (meV)", f"{mc['median']:.2f}")
+                st.metric("Mode (meV)", f"{mc['mode']:.2f}")
+
+            with col2:
+                st.metric("Std Dev (meV)", f"{mc['std']:.2f}")
+                st.metric("Variance (meV²)", f"{mc['variance']:.2f}")
+
+            with col3:
+                st.metric("Skewness", f"{mc['skewness']:.3f}")
+                st.metric("Kurtosis (excess)", f"{mc['kurtosis']:.3f}")
 
 
         # Plot 3: Absorption
