@@ -574,15 +574,24 @@ if run:
         # Plot 2: Emission
         fig2 = go.Figure()
 
-        # --- Analytical (existing) ---
-        fig2.add_trace(go.Scatter(
-            x=std["E_photon_emission"],
-            y=np.real(std["I_emission"]),
-            line=dict(color="royalblue", width=2),
-            name="Analytical"
-        ))
+        # =========================================================
+        # If HR <= 5 → show analytical + Monte Carlo
+        # If HR > 5  → show only Monte Carlo
+        # =========================================================
 
-        # --- Monte Carlo (new) ---
+        show_analytical = results["HR"] <= 5
+
+        # --- Analytical ---
+        if show_analytical:
+
+            fig2.add_trace(go.Scatter(
+                x=std["E_photon_emission"],
+                y=np.real(std["I_emission"]),
+                line=dict(color="royalblue", width=2),
+                name="Analytical"
+            ))
+
+        # --- Monte Carlo ---
         if "monte_carlo_emission" in results:
 
             mc = results["monte_carlo_emission"]
@@ -590,7 +599,7 @@ if run:
             E_mc = mc["E_photon_emission"]
             I_mc = mc["I_emission"]
 
-            # bin width (robust)
+            # robust bin width
             width = np.mean(np.diff(E_mc))
 
             fig2.add_trace(go.Bar(
@@ -604,12 +613,19 @@ if run:
                 )
             ))
 
+        # --- Dynamic title ---
+        title = (
+            "Emission Spectra (Monte Carlo Only)"
+            if results["HR"] > 5
+            else "Emission Spectra (Analytical vs Monte Carlo)"
+        )
+
         # --- Layout ---
         fig2.update_layout(
-            title="Emission Spectra (Analytical vs Monte Carlo)",
+            title=title,
             xaxis=dict(title="Photon Energy (meV)"),
             yaxis=dict(title="PL (arb. units)"),
-            barmode="overlay"   # IMPORTANT: overlay bars + line
+            barmode="overlay"
         )
 
         st.plotly_chart(fig2, use_container_width=True)
