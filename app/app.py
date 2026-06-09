@@ -550,7 +550,7 @@ if run:
         ))
 
         fig1.update_layout(
-            title=f"Spectral Function | HR = {results['HR']: .3f}",
+            title=f"Spectral Function | HR = {results['HR']: .3f} | Debye Waller Factor = {np.exp(-results['HR']):.3f}",
             
             xaxis=dict(
                 title="Phonon Energies (meV)"
