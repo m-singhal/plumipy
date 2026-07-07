@@ -1,19 +1,51 @@
 [project]
 name = "plumipy"
 version = "0.1.0"
-description = "Vibronic spectra toolkit"
-authors = [{name = "Mridul Singhal"}]
+description = "Photoluminescence and absorption spectra from first-principles — Huang–Rhys theory and beyond"
+authors = [{name = "Mridul Singhal", email = "res.mridul@gmail.com"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = [
+    "photoluminescence", "absorption", "Huang-Rhys", "vibronic",
+    "phonons", "DFT", "defects", "electron-phonon", "spectra",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "numpy",
     "h5py",
-    "streamlit",
-    "plotly"
+    "matplotlib",
+    "PyQt6",
+    "mplcursors",
+    "click",
+    "scipy",
 ]
 
+[project.urls]
+Homepage   = "https://github.com/m-singhal/plumipy"
+Repository = "https://github.com/m-singhal/plumipy"
+Issues     = "https://github.com/m-singhal/plumipy/issues"
+
+[project.scripts]
+plumipy     = "plumipy.cli:main"
+plumipy-gui = "app.main:main"
+
 [build-system]
-requires = ["setuptools"]
+requires      = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["plumipy*"]
-exclude = ["app*"]
+include = ["plumipy*", "app*"]
+
+[tool.setuptools.package-data]
+app = ["styles/*.qss"]

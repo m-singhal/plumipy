@@ -1,259 +1,346 @@
 # PLUMIPY
 
-Vibronic spectra toolkit based on Huang–Rhys theory and beyond.
+**Photoluminescence and absorption spectra from first-principles.**
 
-- 🖥️ Interactive GUI (Streamlit app)
-- 🐍 Python package (for scripting and HPC workflows)
+PLUMIPY implements the Huang–Rhys formalism and its extensions to compute vibronic optical spectra of defects and molecules from DFT outputs. It ships both a **desktop GUI** and a **Python API** for scripting and HPC workflows.
 
-# Installation - App
+---
+
+## Features
+
+- Photoluminescence (emission) and absorption spectra
+- Standard Huang–Rhys theory with generating function approach
+- Monte Carlo sampling for emission — numerically stable at any HR factor
+- Displaced–squeezed oscillator model (accounts for GS/ES frequency changes)
+- Temperature-dependent spectra (Bose–Einstein occupation)
+- Mode-resolved Huang–Rhys factors S<sub>k</sub>, total HR factor, Debye–Waller factor
+- Inverse participation ratio (IPR) per mode
+- Three workflows:
+  - **Adiabatic** (structure-based): ΔR projected onto phonon modes
+  - **Vertical gradient** (force-based): ΔF projected onto phonon modes
+  - **External vibrational data**: frequencies + modes from any code
+- Integrates with VASP (CONTCAR, OUTCAR), Phonopy (band.yaml), Gaussian, ORCA, CP2K, QE, …
+- HDF5 export of all computed quantities
+- Interactive comparison of up to 3 calculations side-by-side
+
+---
+
+## Platform Support
+
+| Platform | GUI (`plumipy-gui`) | Python API | Notes |
+|---|---|---|---|
+| macOS 12+ | ✓ | ✓ | Tested on Apple Silicon and Intel |
+| Windows 10/11 | ✓ | ✓ | pip creates `plumipy-gui.exe` in `Scripts\` automatically |
+| Linux (desktop) | ✓ | ✓ | Requires X11 or Wayland display server |
+| Linux HPC / headless | ✗ | ✓ | No display needed; use the Python API and save results to HDF5 |
+
+---
+
+## Installation
+
+Requires Python ≥ 3.10.
 
 ```bash
 git clone https://github.com/m-singhal/plumipy.git
 cd plumipy
 python -m venv plumipy-env
-source plumipy-env/bin/activate   # mac/linux
-pip install -r requirements.txt
+source plumipy-env/bin/activate   # macOS / Linux
+# plumipy-env\Scripts\activate   # Windows
+pip install -e .
 ```
 
-## Running the app
+---
+
+## Desktop GUI
+
+Requires a graphical display (macOS, Windows, or Linux desktop). Launch with:
 
 ```bash
-cd plumipy/app
-streamlit run app.py
+plumipy-gui
 ```
 
-## Overview
+> **HPC / headless servers** — use the Python API directly (see below). The GUI is not needed for computation; all physics is accessible via `calculate_spectra_analytical()`, and results are saved to HDF5 for later inspection.
 
-**PLUMIPY** is a tool for calculating photoluminescence and absorption spectra within the harmonic approximation from first-principles based on the generating function approach.
+The GUI walks you through a four-step wizard:
 
-### Features
+1. **Workflow** — choose Adiabatic, Vertical Gradient, or External Vibrational Data
+2. **Input Files** — browse for structures, forces, phonon files, or NumPy arrays
+3. **Parameters** — ZPL, broadening (σ, γ), temperature, mode subtraction
+4. **Advanced** — Monte Carlo, squeezed oscillator, HDF5 export, experimental overlay
 
-- For solids and molecules  
-- Supports standard Huang–Rhys theory  
-- Beyond Huang–Rhys: Independent-mode displaced–squeezed harmonic oscillator approximation  
-- Deals with large Huang Rhys Factor by using Monte-Carlo Sampling (only for emission spectra)
-- Integrates seamlessly with:
-  - VASP (CONTCAR, OUTCAR)  
-  - Phonopy (band.yaml)  
-- Compatible with other DFT codes via external parsers and NumPy  
-- Temperature-dependent spectra  
-- Force-based (vertical gradient) and structure-based (adiabatic PES) methods  
-- Interactive GUI for visualization  
-- Option to save results in HDF5 format  
+Results are displayed in tabbed panels (Overview, S(E)/S<sub>k</sub>, Emission, Absorption, Mode Analysis, Advanced). Up to 3 calculations can be saved and compared side-by-side.
 
----
+### Screenshots
 
-## What this tool does
+<img src="docs/Full%20comparision%20of%20all%20different%20theories%20with%20experiment.png" alt="Multi-calculation comparison with experimental overlay" width="100%">
 
-### Spectra and spectral functions
-- Photoluminescence (emission) and absorption spectra  
-- Spectral function S(E) and generating functions  
-- Energy-resolved phonon contributions  
+*Compare page — up to 3 calculations plotted side-by-side (emission left, absorption right). Solid = Standard HR, dashed = Monte Carlo, dotted = squeezed oscillator, markers = experiment. Experimental data is aligned in real time using Y-scale and X-shift controls in the sidebar.*
 
-### Electron–phonon coupling analysis
-- Mode-resolved Huang–Rhys factors S_k  
-- Total Huang–Rhys factor  
-- Mass-weighted displacements in normal mode basis  
+<table>
+<tr>
+<td width="50%"><img src="docs/Overview-section.png" alt="Results overview panel" width="100%"></td>
+<td width="50%"><img src="docs/luminescence%20line%20shape.png" alt="Photoluminescence emission spectrum" width="100%"></td>
+</tr>
+<tr>
+<td><em>Overview — total Huang–Rhys factor S, Debye–Waller factor e<sup>−S</sup>, phonon mode count, top-ranked modes by S<sub>k</sub>, and Monte Carlo emission statistics all in one panel.</em></td>
+<td><em>Emission tab — analytical lineshape (generating function), Monte Carlo histogram, and scaled experimental overlay. Interactive tooltips report photon energy and intensity at any point.</em></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/Electron-phonon%20coupling%20analysis.png" alt="Mode analysis scatter plot" width="100%"></td>
+<td width="50%"><img src="docs/Displaced-squeezed%20oscillator%20approx.png" alt="Displaced-squeezed oscillator results" width="100%"></td>
+</tr>
+<tr>
+<td><em>Mode Analysis — interactive S<sub>k</sub> vs phonon energy scatter plot. Bubble size scales with S<sub>k</sub>; colour encodes the inverse participation ratio (IPR). Hover over any mode to see its index, frequency, S<sub>k</sub>, and IPR.</em></td>
+<td><em>Advanced → Squeezed Oscillator — mode-resolved squeezing parameters r<sub>k</sub> = ½ ln(ω<sub>ES,k</sub>/ω<sub>GS,k</sub>) and the resulting frequency-corrected emission and absorption spectral functions and lineshapes.</em></td>
+</tr>
+</table>
 
-### Phonon and vibrational properties
-- Phonon frequencies, normal modes, and mode energies  
-- Inverse participation ratio (IPR)  
-- Ground and excited state vibrational information  
+<img src="docs/compare%20results%20with%20from%20different%20theories.png" alt="Standard HR vs squeezed oscillator with experimental overlay" width="100%">
 
-### Advanced physical models
-- Standard Huang–Rhys theory  
-- Temperature-dependent spectra  
-- Displaced–squeezed oscillator model  
-
-### Flexible input support
-- Structures (POSCAR/CONTCAR, numpy/text formats)  
-- Forces or geometries  
-- Phonons (Phonopy band.yaml, VASP OUTCAR)  
-
-### Data export
-- All computed quantities saved in HDF5 format  
-- Suitable for post-processing and analysis  
+*Advanced → Overlay — Standard HR (top row) and displaced–squeezed oscillator (bottom row) shown as spectral function A(E) and lineshape L(E) in a 4-panel view, with experimental emission overlaid and scaled for direct comparison.*
 
 ---
 
-## How to use
-
-PLUMIPY supports multiple workflows depending on available inputs:
-
-### 1. Adiabatic PES approach (structure-based)
-- Upload ground and excited state structures  
-- Provide phonon data (VASP / Phonopy)  
-
-### 2. Vertical Gradient approximation (force-based)
-- Upload ground state structure  
-- Provide forces (ground and excited state)  
-- Provide phonon data  
-
-### 3. Vibrational inputs (alternative route)
-- Provide frequencies, modes, and masses directly  
-- Useful for non-VASP or custom workflows  
-
-### 4. Set physical parameters
-- Zero-phonon line (ZPL)  
-- Broadening parameters (σ, γ)  
-- Temperature and optional settings  
-
----
-
-# 📦 Outputs and Data Structure
-
-PLUMIPY returns all computed quantities as a structured dictionary. When exporting to **HDF5**, this structure is preserved and can be accessed directly for post-processing.
-
----
-
-## ⚙️ Output Availability (Important)
-
-Output availability depends on the selected inputs and calculation flags:
-
-* **Structures (GS + ES)** → Geometry + adiabatic PES
-* **Forces** → Vertical gradient approximation
-* **Phonons / Vibrations (GS)** → Mode-resolved quantities
-* **Phonons / Vibrations (ES)** → Required for squeezing
-* **ZPL provided** → Enables spectra (standard HR)
-* **Enable Squeezing = True** → Enables squeezed outputs (requires GS + ES phonons)
-
----
-
-## 🔬 Core Quantity
-
-* `data["hbar"]`
-    * Reduced Planck constant
-    * **Units:** $\sqrt{meV \cdot amu} \cdot \text{Å}$
-
----
-
-## 🧱 Geometry & Structure
-
-* `data["R_gs"]` → (N_atoms, 3), Å
-* `data["R_es"]` → (N_atoms, 3), Å
-* `data["atoms"]` → Atomic species
-
----
-
-## ⚡ Forces (if provided)
-
-* `data["F_gs"]` → (N_atoms, 3), eV/Å
-* `data["F_es"]` → (N_atoms, 3), eV/Å
-
----
-
-## ⚖️ Atomic Masses
-
-* `data["masses"]` → (N_atoms,), amu
-
----
-
-## 🎵 Phonons (Ground State)
-
-* `data["freqs_gs"]` → (N_modes,), **THz or cm⁻¹**  
-* `data["modes_gs"]` → (N_modes, N_atoms, 3), **dimensionless**  
-* `data["Ek_gs"]` → (N_modes,), **meV**  
-* `data["wk_gs"]` → (N_modes,), **√(meV/amu)/Å**  
-* `data["IPR_gs"]` → (N_modes,), **dimensionless**  
-
----
-
-## 🎵 Phonons (Excited State)
-
-* `data["freqs_es"]` → (N_modes,), **THz or cm⁻¹**  
-* `data["modes_es"]` → (N_modes, N_atoms, 3), **dimensionless**  
-* `data["Ek_es"]` → (N_modes,), **meV**  
-* `data["wk_es"]` → (N_modes,), **√(meV/amu)/Å**  
-* `data["IPR_es"]` → (N_modes,), **dimensionless**  
-
-> [!NOTE]
-> If ES phonons are not provided, ground-state values are reused by default.
-
----
-
-## 🔗 Electron–Phonon Coupling
-
-* `data["qk"]` → (N_modes,), **√(amu)·Å**  
-* `data["Sk"]` → (N_modes,), **dimensionless**  
-* `data["HR"]` → scalar, **dimensionless**  
-
----
-
-## 🌈 Standard Huang–Rhys Spectra
-*(Available when ZPL is provided)*
+## Python API
 
 ```python
-std = data["standard_hr"]
+from plumipy import calculate_spectra_analytical
 
-S_E = std["S_E"]              # (N_E,), 1/meV
-E_ph = std["E_phonons"]      # (N_E,), meV
+results = calculate_spectra_analytical(
+    structure_gs         = "CONTCAR_gs",   # POSCAR/CONTCAR, .npy, .txt, …
+    structure_es         = "CONTCAR_es",
+    phonons_gs           = "OUTCAR",       # VASP OUTCAR or Phonopy band.yaml
+    qk_calculation_type  = "r",            # "r" = adiabatic, "f" = vertical gradient
+    zpl                  = 1200.0,         # meV
+    sigma_init           = 3.0,            # meV
+    sigma_final          = 3.0,            # meV
+    gamma                = 2.0,            # meV
+    monte_carlo_emission = True,
+    save_to_hdf5         = True,
+)
 
-G_t = std["G_t"]             # (N_t,), dimensionless
-t = std["t_fs"]              # (N_t,), fs
+HR  = results["HR"]
+Sk  = results["Sk"]
+Ek  = results["Ek_gs"]
 
-E_em = std["E_photon_emission"]   # (N_photon,), meV
-I_em = std["I_emission"]          # arbitrary units
-
-E_abs = std["E_photon_absorption"]  # (N_photon,), meV
-I_abs = std["I_absorption"]         # arbitrary units
+std = results["standard_hr"]
+E_em, I_em  = std["E_photon_emission"],   std["I_emission"]
+E_abs, I_abs = std["E_photon_absorption"], std["I_absorption"]
 ```
----
 
-## 🎲 Monte Carlo Sampling - Emission
-*(Available when ZPL is provided and monte_carlo_emission=True)*
-- Use this especially for high Total Huang-Rhys factor where the default (generating function) approach becomes numerically unstable. Get I_emission within standard Huang-Rhys theory with Monte-Carlo sampling of phonons from Poisson distribution.
+For the full parameter reference:
 
 ```python
-mc = data["monte_carlo_emission"]
-
-E_em = mc["E_photon_emission"]       # (N_E,), meV
-I_em = mc["I_emission"]              # (N_E,), arbitrary units
-
-mean = mc["mean"]                    # meV
-median = mc["median"]                # meV
-mode = mc["mode"]                    # meV
-
-var = mc["var"]
-std = mc["std"]
-
-skewness = mc["skewness"]
-kurtosis = mc["kurtosis"]            # Excess kurtosis
+from plumipy import calculate_spectra_analytical
+help(calculate_spectra_analytical)
 ```
+
+or see [`plumipy/api.py`](plumipy/api.py).
+
 ---
 
-## 🌀 Displaced–Squeezed Model  
-*(Enable Squeezing = True + ES phonons required)*
+## HPC & Scripted Workflows
+
+The Python API runs on any platform with Python ≥ 3.10 — no display or GUI is required. This makes it suitable for batch jobs on HPC clusters.
+
+### Install on a cluster
+
+```bash
+module load python/3.11           # adjust to your cluster's module name
+python -m venv ~/plumipy-env
+source ~/plumipy-env/bin/activate
+pip install git+https://github.com/m-singhal/plumipy.git
+```
+
+Or, if you have the repository checked out:
+
+```bash
+pip install /path/to/plumipy
+```
+
+### Write a run script
+
+Create `run_plumipy.py`:
 
 ```python
-sq = data["squeezed"]
+from plumipy import calculate_spectra_analytical
 
-rk = sq["rk"]                     # (N_modes,), dimensionless
+results = calculate_spectra_analytical(
+    structure_gs        = "CONTCAR_gs",   # POSCAR/CONTCAR, .npy, or .txt
+    structure_es        = "CONTCAR_es",
+    phonons_gs          = "OUTCAR",       # VASP OUTCAR or Phonopy band.yaml
+    qk_calculation_type = "r",           # "r" = adiabatic, "f" = vertical gradient
+    zpl                 = 1200.0,        # meV
+    sigma_init          = 3.0,           # meV
+    sigma_final         = 3.0,           # meV
+    gamma               = 2.0,           # meV
+    temperature         = 300.0,         # K
+    monte_carlo_emission= True,
+    save_to_hdf5        = True,          # writes spectra_output.h5
+)
 
-G_t_em = sq["G_t_emission"]      # (N_t,)
-G_t_abs = sq["G_t_absorption"]   # (N_t,)
-t = sq["t_fs"]                   # (N_t,), fs
-
-E_em = sq["E_photon_emission"]   # (N_photon,), meV
-E_abs = sq["E_photon_absorption"]# (N_photon,), meV
-
-I_em = sq["I_emission"]          # arbitrary units
-I_abs = sq["I_absorption"]       # arbitrary units
-
-nk_em = sq["nk_mean_emission"]   # (N_E,)
-nk_abs = sq["nk_mean_absorption"]# (N_E,)
-
-E_ph = sq["E_phonons"]           # (N_E,), meV
-
-S_E_em = sq["S_E_emission"]      # (N_E,), 1/meV
-S_E_abs = sq["S_E_absorption"]   # (N_E,), 1/meV
+print(f"Huang–Rhys factor S  : {results['HR']:.4f}")
+print(f"Mode-resolved Sk     : {results['Sk']}")
 ```
+
+Run interactively to test:
+
+```bash
+python run_plumipy.py
+```
+
+### Submit a SLURM job
+
+Create `plumipy_job.sh`:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=plumipy
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=8G
+#SBATCH --time=01:00:00
+#SBATCH --output=plumipy_%j.log
+
+module load python/3.11
+source ~/plumipy-env/bin/activate
+
+python run_plumipy.py
+```
+
+Submit and monitor:
+
+```bash
+sbatch plumipy_job.sh
+squeue --me
+tail -f plumipy_<jobid>.log
+```
+
+### Retrieve and inspect results
+
+Copy the HDF5 file back to your local machine:
+
+```bash
+scp user@cluster.uni.edu:/scratch/user/spectra_output.h5 .
+```
+
+Then load it locally in Python or open the PLUMIPY desktop GUI (File → Load HDF5). See [Loading HDF5 Results](#loading-hdf5-results) for the Python loader.
+
 ---
 
-## 💾 Using HDF5 Output (for analysis)
+## Output Structure
 
-When exporting results, the HDF5 file preserves the internal dictionary structure, making it easy to reload for custom post-processing.
+All outputs are returned as a Python dictionary. When `save_to_hdf5=True`, the same structure is written to `spectra_output.h5`.
 
-### 📥 Step 1: Load file
+### Core
+
+| Key | Shape | Units |
+|---|---|---|
+| `hbar` | scalar | √(meV·amu)·Å |
+
+### Geometry
+
+| Key | Shape | Units |
+|---|---|---|
+| `R_gs` | (N_atoms, 3) | Å |
+| `R_es` | (N_atoms, 3) | Å |
+| `atoms` | list | — |
+| `masses` | (N_atoms,) | amu |
+
+### Forces
+
+| Key | Shape | Units |
+|---|---|---|
+| `F_gs` | (N_atoms, 3) | eV/Å |
+| `F_es` | (N_atoms, 3) | eV/Å |
+
+### Phonons / Vibrations — Ground State
+
+| Key | Shape | Units |
+|---|---|---|
+| `freqs_gs` | (N_modes,) | THz or cm⁻¹ |
+| `modes_gs` | (N_modes, N_atoms, 3) | dimensionless |
+| `Ek_gs` | (N_modes,) | meV |
+| `wk_gs` | (N_modes,) | √(meV/amu)/Å |
+| `IPR_gs` | (N_modes,) | dimensionless |
+
+### Phonons / Vibrations — Excited State
+
+| Key | Shape | Units |
+|---|---|---|
+| `freqs_es` | (N_modes,) | THz or cm⁻¹ |
+| `modes_es` | (N_modes, N_atoms, 3) | dimensionless |
+| `Ek_es` | (N_modes,) | meV |
+| `wk_es` | (N_modes,) | √(meV/amu)/Å |
+| `IPR_es` | (N_modes,) | dimensionless |
+
+> If ES phonons are not provided, GS values are reused (no squeezing).
+
+### Electron–Phonon Coupling
+
+| Key | Shape | Units |
+|---|---|---|
+| `qk` | (N_modes,) | √(amu)·Å |
+| `Sk` | (N_modes,) | dimensionless |
+| `HR` | scalar | dimensionless |
+
+### Standard Huang–Rhys Spectra (`results["standard_hr"]`)
+
+```python
+std = results["standard_hr"]
+
+std["S_E"]                  # (N_E,)      spectral function [1/meV]
+std["E_phonons"]            # (N_E,)      phonon energy grid [meV]
+std["G_t"]                  # (N_t,)      generating function
+std["t_fs"]                 # (N_t,)      time grid [fs]
+std["E_photon_emission"]    # (N_ph,)     [meV]
+std["I_emission"]           # (N_ph,)     arbitrary units
+std["E_photon_absorption"]  # (N_ph,)     [meV]
+std["I_absorption"]         # (N_ph,)     arbitrary units
+```
+
+### Monte Carlo Emission (`results["monte_carlo_emission"]`)
+
+```python
+mc = results["monte_carlo_emission"]
+
+mc["E_photon_emission"]   # (N_E,)  [meV]
+mc["I_emission"]          # (N_E,)  arbitrary units
+mc["mean"]                # meV
+mc["median"]              # meV
+mc["mode"]                # meV
+mc["var"]                 # meV²
+mc["std"]                 # meV
+mc["skewness"]            # dimensionless
+mc["kurtosis"]            # excess kurtosis, dimensionless
+```
+
+### Displaced–Squeezed Oscillator (`results["squeezed"]`)
+
+Requires `enable_squeezing=True` and separate ES phonons.
+
+```python
+sq = results["squeezed"]
+
+sq["rk"]                    # (N_modes,)  squeezing parameters
+sq["G_t_emission"]          # (N_t,)
+sq["G_t_absorption"]        # (N_t,)
+sq["t_fs"]                  # (N_t,)      [fs]
+sq["E_photon_emission"]     # (N_ph,)     [meV]
+sq["I_emission"]            # (N_ph,)
+sq["E_photon_absorption"]   # (N_ph,)     [meV]
+sq["I_absorption"]          # (N_ph,)
+sq["nk_mean_emission"]      # (N_E,)
+sq["nk_mean_absorption"]    # (N_E,)
+sq["E_phonons"]             # (N_E,)      [meV]
+sq["S_E_emission"]          # (N_E,)      [1/meV]
+sq["S_E_absorption"]        # (N_E,)      [1/meV]
+```
+
+---
+
+## Loading HDF5 Results
+
 ```python
 import h5py
 import numpy as np
@@ -263,73 +350,41 @@ def load_hdf5_results(filename):
         data = {}
         for key in group.keys():
             item = group[key]
-
-            if isinstance(item, h5py.Group):
-                data[key] = load_group(item)
-            else:
-                data[key] = item[()]
-
+            data[key] = load_group(item) if isinstance(item, h5py.Group) else item[()]
         return data
-
     with h5py.File(filename, "r") as f:
         return load_group(f)
-        
+
 data = load_hdf5_results("spectra_output.h5")
-```
 
-### 📊 Step 2: Access data
-```python
-Sk = data["Sk"]
-Ek = data["Ek_gs"]
-
+Sk  = data["Sk"]
 std = data["standard_hr"]
 I_em = std["I_emission"]
 ```
 
-### 🌀 Step 3: Access squeezed (if enabled)
-```python
-if data["squeezed"] is not None:
-    sq = data["squeezed"]
-    I_sq = sq["I_emission"]
-```
 ---
 
-### 📌 Notes
-    - Structure mirrors the results dictionary  
-    - Not all keys are always present  
-    - Energies are in **meV**  
-    - Arrays are NumPy-compatible  
+## References
 
-    👉 This enables full flexibility for custom analysis and plotting.
+If you use PLUMIPY in your research, please cite the following:
+
+1. Alkauskas, A., Buckley, B. B., Awschalom, D. D. & Van de Walle, C. G. First-principles theory of the luminescence lineshape for the triplet transition in diamond NV centres. *New J. Phys.* **16**, 073026 (2014). https://doi.org/10.1088/1367-2630/16/7/073026
+   — Standard Huang–Rhys theory and the generating-function approach for computing vibronic PL lineshapes from first principles.
+
+2. Iwański, J. et al. Revealing polytypism in 2D boron nitride with UV photoluminescence. *npj 2D Mater. Appl.* **8**, 72 (2024). https://doi.org/10.1038/s41699-024-00511-7
+   — Multiconfiguration spin-purification method for separating spin-manifold contributions to the PL spectrum.
+
+3. Jin, Y. et al. Photoluminescence spectra of point defects in semiconductors: Validation of first-principles calculations. *Phys. Rev. Mater.* **5**, 084603 (2021). https://doi.org/10.1103/PhysRevMaterials.5.084603
+   — Temperature-dependent PL spectra via Bose–Einstein phonon occupation; vertical-gradient (force-based) approach for computing Huang–Rhys factors.
+
+4. *(this work — displaced–squeezed oscillator model)*
+   — Extension of the generating function to account for ground- and excited-state frequency differences through mode-resolved squeezing parameters r<sub>k</sub> = ½ ln(ω<sub>ES,k</sub>/ω<sub>GS,k</sub>).
+
+5. *(this work — Monte Carlo emission sampling)*
+   — Numerically stable Monte Carlo approach for PL lineshapes at any Huang–Rhys factor, bypassing the generating-function instability in the strong-coupling regime.
 
 ---
 
-# Installation - Python package
-```bash
-git clone https://github.com/m-singhal/plumipy.git
-cd plumipy
-python -m venv plumipy-env
-source plumipy-env/bin/activate   # mac/linux
-pip install -e .
-```
+## License
 
-## Usage
-```python
-from plumipy import calculate_spectra_analytical
-from plumipy import load_hdf5_results
-
-results = calculate_spectra_analytical(...)
-data = load_hdf5_results("spectra_output.h5")
-```
-
-### For full details of inputs and available options, see:
-👉 plumipy/api.py
-
-### or inspect directly in Python:
-```python
-from plumipy import calculate_spectra_analytical
-help(calculate_spectra_analytical)
-```
-
-
-
+MIT — see [LICENSE](LICENSE).

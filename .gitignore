@@ -1,5 +1,46 @@
+# Build artifacts
+build/
+dist/
+*.egg-info/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.eggs/
+
+# macOS app bundle — has hardcoded local paths, not for distribution
+PLUMIPY.app/
+
+# PyInstaller
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Output files
 outputs/
 spectra_output.h5
-.DS_Store
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
