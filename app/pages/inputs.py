@@ -743,7 +743,7 @@ class Step4Advanced(QWidget):
         mc_lay = QVBoxLayout(mc_frame)
         self.mc_check = QCheckBox("  Monte Carlo Sampling")
         self.mc_check.setFont(QFont("Helvetica Neue", 13, QFont.Weight.Bold))
-        self.mc_check.setChecked(True)
+        self.mc_check.setChecked(False)
         mc_lay.addWidget(self.mc_check)
         mc_body = QLabel(
             "Samples phonon numbers from a Poisson distribution with mean Sₖ per mode, "
@@ -811,7 +811,7 @@ class Step4Advanced(QWidget):
         hdf_lay = QVBoxLayout(hdf_frame)
         self.hdf5_check = QCheckBox("  Save results as HDF5")
         self.hdf5_check.setFont(QFont("Helvetica Neue", 13, QFont.Weight.Bold))
-        self.hdf5_check.setChecked(True)
+        self.hdf5_check.setChecked(False)
         self.hdf5_check.toggled.connect(self._toggle_hdf5)
         hdf_lay.addWidget(self.hdf5_check)
         hdf_body = QLabel(
@@ -834,6 +834,7 @@ class Step4Advanced(QWidget):
         browse_h.setFixedWidth(80)
         browse_h.clicked.connect(self._browse_hdf5)
         hr_lay.addWidget(browse_h)
+        self._hdf5_row.setVisible(False)
         hdf_lay.addWidget(self._hdf5_row)
         lay.addWidget(hdf_frame)
 

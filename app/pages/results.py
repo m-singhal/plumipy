@@ -11,6 +11,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from app.widgets.plot_canvas import PlotCanvas, DARK
+from app.pages.phonon_viewer import PhononViewerWidget
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Energy unit helpers
@@ -920,7 +921,9 @@ class AbsorptionTab(QWidget):
 # ─────────────────────────────────────────────────────────────────────────────
 # Tab 5 – Mode analysis  (interactive)
 # ─────────────────────────────────────────────────────────────────────────────
-class ModeAnalysisTab(QWidget):
+class _SkScatterTab(QWidget):
+    """Sk vs phonon energy scatter plot (inner sub-tab of ModeAnalysisTab)."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._results = None
@@ -972,7 +975,6 @@ class ModeAnalysisTab(QWidget):
         freqs_thz = Ek / 4.13566
         freqs_cm  = Ek * 8.0655
 
-        # Remove previous colorbar before clearing axes
         if self._cbar is not None:
             try:
                 self._cbar.remove()
@@ -1038,6 +1040,32 @@ class ModeAnalysisTab(QWidget):
         @self._cursor.connect("remove")
         def on_remove(sel):
             card.setVisible(False)
+
+
+class ModeAnalysisTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        self._tabs = QTabWidget()
+        self._tabs.setTabPosition(QTabWidget.TabPosition.North)
+        lay.addWidget(self._tabs, 1)
+
+        self._sk_tab      = _SkScatterTab()
+        self._phonon_tab  = PhononViewerWidget()
+
+        self._tabs.addTab(self._sk_tab,     "Sk and IPR")
+        self._tabs.addTab(self._phonon_tab, "Normal Mode Vectors")
+
+    def populate(self, results: dict):
+        self._sk_tab.populate(results)
+        if "modes_gs" in results and "R_gs" in results:
+            self._phonon_tab.set_results(results)
+        else:
+            self._phonon_tab.clear()
 
 
 def plt_colormap(norm_values):

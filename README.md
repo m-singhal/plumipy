@@ -15,6 +15,7 @@ PLUMIPY implements the Huang–Rhys formalism and its extensions to compute vibr
 - Temperature-dependent spectra (Bose–Einstein occupation)
 - Mode-resolved Huang–Rhys factors S<sub>k</sub>, total HR factor, Debye–Waller factor
 - Inverse participation ratio (IPR) per mode
+- **Normal mode vector viewer** — interactive WebGL 3D renderer of phonon displacement vectors on the crystal structure, with CPK-coloured atoms, bonds, and VESTA export; no internet required
 - Three workflows:
   - **Adiabatic** (structure-based): ΔR projected onto phonon modes
   - **Vertical gradient** (force-based): ΔF projected onto phonon modes
@@ -69,6 +70,11 @@ The GUI walks you through a four-step wizard:
 4. **Advanced** — Monte Carlo, squeezed oscillator, HDF5 export, experimental overlay
 
 Results are displayed in tabbed panels (Overview, S(E)/S<sub>k</sub>, Emission, Absorption, Mode Analysis, Advanced). Up to 3 calculations can be saved and compared side-by-side.
+
+The **Mode Analysis** tab contains two sub-tabs:
+
+- **Sk and IPR** — interactive scatter plot of S<sub>k</sub> vs phonon energy; bubble size scales with S<sub>k</sub>, colour encodes IPR; hover tooltips report mode index, frequency, S<sub>k</sub>, and IPR.
+- **Normal Mode Vectors** — embedded WebGL viewer that renders the phonon displacement vectors of any selected mode directly on the crystal structure. Features CPK-coloured atoms, covalent bonds, unit-cell wireframe, red displacement arrows, and an element legend. Controls: mode index, arrow scale (auto-set so the largest displacement ≈ 2 Å), displacement threshold. Optional **Save .vesta** exports a VESTA file with CELLP, STRUC, BOUND, SBOND (bond cutoffs from covalent radii), SITET, VECTR, and VECTT — open directly in VESTA to inspect and render.
 
 ### Screenshots
 

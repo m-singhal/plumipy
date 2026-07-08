@@ -39,7 +39,7 @@ class ReadFiles:
 
       atomic_positions[atomic_positions > 0.99] -= 1
       atomic_positions = np.dot(atomic_positions, lattice_vectors)
-      return (atomic_positions, atoms)
+      return (atomic_positions, atoms, lattice_vectors)
       
       
 

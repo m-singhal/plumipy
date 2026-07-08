@@ -151,8 +151,9 @@ def calculate_spectra_analytical(
             elif extension in [".txt", ".dat"]:
                 R_gs = np.loadtxt(structure_gs)
             else:
-                R_gs, atoms = pl.ReadStructure(structure_gs)
+                R_gs, atoms, lattice = pl.ReadStructure(structure_gs)
                 results["atoms"] = atoms
+                results["lattice"] = lattice
         else:
             raise ValueError("Unsupported type for structure_gs. Must be a numpy array or a file path.")
         results["R_gs"] = R_gs  ## Units: Angstrom, an array of shape (N_atoms, 3)
@@ -167,12 +168,13 @@ def calculate_spectra_analytical(
             elif extension in [".txt", ".dat"]:
                 R_es = np.loadtxt(structure_es)
             else:
-                R_es, atoms = pl.ReadStructure(structure_es)
+                R_es, atoms, lattice = pl.ReadStructure(structure_es)
                 if "atoms" in results:
                     if not np.array_equal(results["atoms"], atoms):
                         raise ValueError("GS and ES atoms mismatch.")
                 else:
                     results["atoms"] = atoms
+                    results["lattice"] = lattice
         else:
             raise ValueError("Unsupported type for structure_es. Must be a numpy array or a file path.")
         results["R_es"] = R_es  ## Units: Angstrom, an array of shape (N_atoms, 3)

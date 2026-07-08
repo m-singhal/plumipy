@@ -26,6 +26,7 @@ dependencies = [
     "h5py",
     "matplotlib",
     "PyQt6",
+    "PyQt6-WebEngine",
     "mplcursors",
     "click",
     "scipy",
@@ -48,4 +49,4 @@ build-backend = "setuptools.build_meta"
 include = ["plumipy*", "app*"]
 
 [tool.setuptools.package-data]
-app = ["styles/*.qss"]
+app = ["styles/*.qss", "html/*.html"]

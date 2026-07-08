@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#1e1e2e; overflow:hidden; width:100vw; height:100vh; }
+canvas { display:block; width:100%; height:100%; }
+#info {
+  position:absolute; bottom:10px; left:12px;
+  color:#a6adc8; font-family:monospace; font-size:11px;
+  pointer-events:none; letter-spacing:0.03em;
+}
+#hint {
+  position:absolute; top:10px; right:12px;
+  color:#45475a; font-family:monospace; font-size:10px;
+  text-align:right; pointer-events:none; line-height:1.7;
+}
+#placeholder {
+  position:absolute; top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  color:#45475a; font-family:monospace; font-size:13px;
+  text-align:center; pointer-events:none;
+}
+#legend {
+  position:absolute; bottom:30px; right:12px;
+  color:#cdd6f4; font-family:monospace; font-size:11px;
+  pointer-events:none; display:flex; flex-direction:column;
+  align-items:flex-end; gap:4px;
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info"></div>
+<div id="hint">Left drag · rotate<br>Right drag · pan<br>Scroll · zoom</div>
+<div id="placeholder">Select a mode and click Render</div>
+<div id="legend"></div>
+
+<script>
+// ─── WebGL context ────────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl', {antialias:true}) ||
+           canvas.getContext('experimental-webgl', {antialias:true});
+const infoEl   = document.getElementById('info');
+const phEl     = document.getElementById('placeholder');
+const legendEl = document.getElementById('legend');
+
+if (!gl) { phEl.textContent = 'WebGL not supported in this environment'; }
+
+// ─── State variables (must be declared before resize() calls render()) ────────
+let cameraQuat=[0,0,0,1];
+let pan=[0,0];
+let zoom=1.0;
+let sceneCenter=[0,0,0];
+let sceneRadius=5;
+let mouse={down:false, rdown:false, x:0, y:0};
+let lastTouch=null;
+let scene=null;
+
+function resize() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+  if (gl) gl.viewport(0, 0, canvas.width, canvas.height);
+  render();
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ─── Shaders ──────────────────────────────────────────────────────────────────
+const VS_PHONG = `
+  attribute vec3 aPos;
+  attribute vec3 aNorm;
+  uniform mat4 uMVP;
+  uniform mat4 uMV;
+  uniform mat3 uNM;
+  varying vec3 vNormV;
+  varying vec3 vPosV;
+  void main(){
+    vec4 posV = uMV * vec4(aPos, 1.0);
+    vPosV  = posV.xyz;
+    vNormV = normalize(uNM * aNorm);
+    gl_Position = uMVP * vec4(aPos, 1.0);
+  }`;
+
+const FS_PHONG = `
+  precision mediump float;
+  uniform vec3 uColor;
+  varying vec3 vNormV;
+  varying vec3 vPosV;
+  void main(){
+    vec3 L = normalize(vec3(8.0, 14.0, 10.0) - vPosV);
+    vec3 N = normalize(vNormV);
+    vec3 V = normalize(-vPosV);
+    vec3 H = normalize(L + V);
+    float diff = max(dot(N,L), 0.0);
+    float spec = pow(max(dot(N,H), 0.0), 48.0);
+    float rim  = pow(1.0 - max(dot(N,V), 0.0), 3.0) * 0.15;
+    vec3 col = uColor*(0.22 + 0.70*diff) + vec3(0.55)*spec + uColor*rim;
+    gl_FragColor = vec4(col, 1.0);
+  }`;
+
+const VS_LINE = `
+  attribute vec3 aPos;
+  uniform mat4 uMVP;
+  void main(){ gl_Position = uMVP * vec4(aPos, 1.0); }`;
+
+const FS_LINE = `
+  precision mediump float;
+  uniform vec4 uColor;
+  void main(){ gl_FragColor = uColor; }`;
+
+function compileShader(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s); return s;
+}
+function makeProgram(vs, fs) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compileShader(gl.VERTEX_SHADER,   vs));
+  gl.attachShader(p, compileShader(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p); return p;
+}
+
+const phongProg = gl ? makeProgram(VS_PHONG, FS_PHONG) : null;
+const lineProg  = gl ? makeProgram(VS_LINE,  FS_LINE)  : null;
+
+// ─── Matrix / vector math (column-major, matches WebGL) ───────────────────────
+const m4 = () => new Float32Array(16);
+
+function m4id(m) { m.fill(0); m[0]=m[5]=m[10]=m[15]=1; return m; }
+
+function m4mul(C, A, B) {
+  for (let c=0;c<4;c++) for (let r=0;r<4;r++) {
+    let s=0; for(let k=0;k<4;k++) s+=A[r+k*4]*B[k+c*4]; C[r+c*4]=s;
+  }
+  return C;
+}
+
+function m4perspective(m, fovY, aspect, near, far) {
+  const f=1/Math.tan(fovY/2); m.fill(0);
+  m[0]=f/aspect; m[5]=f;
+  m[10]=(far+near)/(near-far); m[11]=-1;
+  m[14]=2*far*near/(near-far);
+  return m;
+}
+
+function m4lookAt(m, eye, at, up) {
+  const z=vnorm(vsub(eye,at)), x=vnorm(vcross(up,z)), y=vcross(z,x);
+  m[0]=x[0]; m[1]=y[0]; m[2]=z[0]; m[3]=0;
+  m[4]=x[1]; m[5]=y[1]; m[6]=z[1]; m[7]=0;
+  m[8]=x[2]; m[9]=y[2]; m[10]=z[2]; m[11]=0;
+  m[12]=-vdot(x,eye); m[13]=-vdot(y,eye); m[14]=-vdot(z,eye); m[15]=1;
+  return m;
+}
+
+function m4fromQuat(m, [qx,qy,qz,qw]) {
+  const x2=qx+qx, y2=qy+qy, z2=qz+qz;
+  const xx=qx*x2, xy=qx*y2, xz=qx*z2;
+  const yy=qy*y2, yz=qy*z2, zz=qz*z2;
+  const wx=qw*x2, wy=qw*y2, wz=qw*z2;
+  m[0]=1-yy-zz; m[1]=xy+wz;    m[2]=xz-wy;    m[3]=0;
+  m[4]=xy-wz;   m[5]=1-xx-zz;  m[6]=yz+wx;    m[7]=0;
+  m[8]=xz+wy;   m[9]=yz-wx;    m[10]=1-xx-yy; m[11]=0;
+  m[12]=0; m[13]=0; m[14]=0; m[15]=1;
+  return m;
+}
+
+// Normal matrix: upper-left 3x3 of column-major m4 (valid for uniform scale)
+function nm3(mv) {
+  return new Float32Array([
+    mv[0],mv[1],mv[2],
+    mv[4],mv[5],mv[6],
+    mv[8],mv[9],mv[10]
+  ]);
+}
+
+const vadd  = (a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+const vsub  = (a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const vscal = (v,s)=>[v[0]*s,v[1]*s,v[2]*s];
+const vdot  = (a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const vlen  = v=>Math.sqrt(vdot(v,v));
+const vnorm = v=>{ const l=vlen(v)||1; return vscal(v,1/l); };
+const vcross= (a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+
+function quatMul([ax,ay,az,aw],[bx,by,bz,bw]) {
+  return [
+    aw*bx+ax*bw+ay*bz-az*by,
+    aw*by-ax*bz+ay*bw+az*bx,
+    aw*bz+ax*by-ay*bx+az*bw,
+    aw*bw-ax*bx-ay*by-az*bz
+  ];
+}
+
+// ─── Geometry generators ──────────────────────────────────────────────────────
+function icosphere(sub) {
+  const t=(1+Math.sqrt(5))/2;
+  let V=[[-1,t,0],[1,t,0],[-1,-t,0],[1,-t,0],[0,-1,t],[0,1,t],
+          [0,-1,-t],[0,1,-t],[t,0,-1],[t,0,1],[-t,0,-1],[-t,0,1]
+         ].map(vnorm);
+  let F=[[0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],
+         [1,5,9],[5,11,4],[11,10,2],[10,7,6],[7,1,8],
+         [3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],
+         [4,9,5],[2,4,11],[6,2,10],[8,6,7],[9,8,1]];
+  for(let s=0;s<sub;s++){
+    const mc={};
+    const mid=(a,b)=>{
+      const k=Math.min(a,b)*100000+Math.max(a,b);
+      if(k in mc) return mc[k];
+      mc[k]=V.length; V.push(vnorm(vadd(V[a],V[b]))); return mc[k];
+    };
+    F=F.flatMap(([a,b,c])=>{
+      const ab=mid(a,b),bc=mid(b,c),ca=mid(c,a);
+      return [[a,ab,ca],[b,bc,ab],[c,ca,bc],[ab,bc,ca]];
+    });
+  }
+  const pos=[], norm=[];
+  for(const [a,b,c] of F) for(const i of [a,b,c]){ pos.push(...V[i]); norm.push(...V[i]); }
+  return { pos:new Float32Array(pos), norm:new Float32Array(norm), count:F.length*3 };
+}
+
+function cylinderGeo(segs) {
+  const pos=[], norm=[];
+  for(let i=0;i<segs;i++){
+    const a0=2*Math.PI*i/segs, a1=2*Math.PI*(i+1)/segs;
+    const c0=Math.cos(a0),s0=Math.sin(a0),c1=Math.cos(a1),s1=Math.sin(a1);
+    pos.push(c0,0,s0, c1,0,s1, c1,1,s1,  c0,0,s0, c1,1,s1, c0,1,s0);
+    norm.push(c0,0,s0,c1,0,s1,c1,0,s1,   c0,0,s0,c1,0,s1,c0,0,s0);
+  }
+  return { pos:new Float32Array(pos), norm:new Float32Array(norm), count:segs*6 };
+}
+
+function coneGeo(segs) {
+  const pos=[], norm=[];
+  for(let i=0;i<segs;i++){
+    const a0=2*Math.PI*i/segs, a1=2*Math.PI*(i+1)/segs;
+    const c0=Math.cos(a0),s0=Math.sin(a0),c1=Math.cos(a1),s1=Math.sin(a1);
+    pos.push(c0,0,s0, c1,0,s1, 0,1,0);
+    const sl=Math.SQRT1_2;
+    norm.push(c0,sl,s0, c1,sl,s1, 0,1,0);
+  }
+  return { pos:new Float32Array(pos), norm:new Float32Array(norm), count:segs*3 };
+}
+
+const SPHERE = icosphere(2);
+const CYL    = cylinderGeo(16);
+const CONE   = coneGeo(16);
+
+function mkBuf(data) {
+  const b=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,b);
+  gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);
+  return b;
+}
+
+const sphereP=mkBuf(SPHERE.pos), sphereN=mkBuf(SPHERE.norm);
+const cylP   =mkBuf(CYL.pos),    cylN   =mkBuf(CYL.norm);
+const coneP  =mkBuf(CONE.pos),   coneN  =mkBuf(CONE.norm);
+const lineBuf=gl.createBuffer();
+
+// ─── Draw helpers ─────────────────────────────────────────────────────────────
+function bindAttr(prog, name, buf) {
+  const loc=gl.getAttribLocation(prog,name);
+  if(loc<0) return;
+  gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0);
+}
+
+function drawMesh(pBuf, nBuf, count, mvp, mv, color) {
+  gl.useProgram(phongProg);
+  bindAttr(phongProg,'aPos',pBuf);
+  bindAttr(phongProg,'aNorm',nBuf);
+  gl.uniformMatrix4fv(gl.getUniformLocation(phongProg,'uMVP'),false,mvp);
+  gl.uniformMatrix4fv(gl.getUniformLocation(phongProg,'uMV'), false,mv);
+  gl.uniformMatrix3fv(gl.getUniformLocation(phongProg,'uNM'), false,nm3(mv));
+  gl.uniform3fv(gl.getUniformLocation(phongProg,'uColor'),color);
+  gl.drawArrays(gl.TRIANGLES,0,count);
+}
+
+// Build a column-major TRS model matrix: translate to (tx,ty,tz),
+// apply rotation R (3×3 column-major embedded in m4), scale (sx,sy,sz)
+function trsModel(tx,ty,tz, R, sx,sy,sz) {
+  // scale columns of R, then set translation
+  const m=m4();
+  m[0]=R[0]*sx; m[1]=R[1]*sx; m[2]=R[2]*sx;  m[3]=0;
+  m[4]=R[3]*sy; m[5]=R[4]*sy; m[6]=R[5]*sy;  m[7]=0;
+  m[8]=R[6]*sz; m[9]=R[7]*sz; m[10]=R[8]*sz; m[11]=0;
+  m[12]=tx; m[13]=ty; m[14]=tz; m[15]=1;
+  return m;
+}
+
+// Rotation matrix (3×3, column-major) that maps Y-axis → dir
+function rotYtoDir(dir) {
+  const d=vnorm(dir), Y=[0,1,0];
+  const c=vdot(Y,d), s=Math.sqrt(1-c*c);
+  if(s<1e-6) {
+    // parallel or anti-parallel
+    if(c>0) return [1,0,0, 0,1,0, 0,0,1];
+    return [-1,0,0, 0,-1,0, 0,0,1]; // 180° flip
+  }
+  const ax=vnorm(vcross(Y,d));
+  const t=1-c, [rx,ry,rz]=ax;
+  // Rodriguez column-major 3×3
+  return [
+    t*rx*rx+c,    t*rx*ry+s*rz, t*rx*rz-s*ry,
+    t*rx*ry-s*rz, t*ry*ry+c,    t*ry*rz+s*rx,
+    t*rx*rz+s*ry, t*ry*rz-s*rx, t*rz*rz+c
+  ];
+}
+
+function drawSphere(pos, radius, color, viewMat, projMat) {
+  const [x,y,z]=pos;
+  const r=radius;
+  const model=trsModel(x,y,z, [1,0,0,0,1,0,0,0,1], r,r,r);
+  const mv=m4(); m4mul(mv,viewMat,model);
+  const mvp=m4(); m4mul(mvp,projMat,mv);
+  drawMesh(sphereP,sphereN,SPHERE.count,mvp,mv,color);
+}
+
+function drawArrow(base, vec, color, viewMat, projMat) {
+  const len=vlen(vec);
+  if(len<1e-6) return;
+  const dir=vnorm(vec);
+  const R=rotYtoDir(dir);
+
+  const shaftLen=len*0.72, headLen=len*0.28;
+  const shaftR=Math.max(len*0.06, 0.08);
+  const headR =Math.max(len*0.16, 0.18);
+
+  // shaft: origin at base, scaled along dir
+  const [bx,by,bz]=base;
+  const m1=trsModel(bx,by,bz, R, shaftR,shaftLen,shaftR);
+  const mv1=m4(); m4mul(mv1,viewMat,m1);
+  const mvp1=m4(); m4mul(mvp1,projMat,mv1);
+  drawMesh(cylP,cylN,CYL.count,mvp1,mv1,color);
+
+  // cone: origin at base + dir*shaftLen
+  const headBase=vadd(base,vscal(dir,shaftLen));
+  const m2=trsModel(headBase[0],headBase[1],headBase[2], R, headR,headLen,headR);
+  const mv2=m4(); m4mul(mv2,viewMat,m2);
+  const mvp2=m4(); m4mul(mvp2,projMat,mv2);
+  drawMesh(coneP,coneN,CONE.count,mvp2,mv2,color);
+}
+
+function drawBond(posA, posB, colorA, colorB, viewMat, projMat) {
+  const vec=vsub(posB,posA);
+  const len=vlen(vec);
+  if(len<1e-4) return;
+  const R=rotYtoDir(vec);
+  const r=0.10;
+  const mid=vadd(posA,vscal(vec,0.5));
+  // half from A
+  const m1=trsModel(posA[0],posA[1],posA[2], R, r,len*0.5,r);
+  const mv1=m4(); m4mul(mv1,viewMat,m1);
+  const mvp1=m4(); m4mul(mvp1,projMat,mv1);
+  drawMesh(cylP,cylN,CYL.count,mvp1,mv1,colorA);
+  // half from mid
+  const m2=trsModel(mid[0],mid[1],mid[2], R, r,len*0.5,r);
+  const mv2=m4(); m4mul(mv2,viewMat,m2);
+  const mvp2=m4(); m4mul(mvp2,projMat,mv2);
+  drawMesh(cylP,cylN,CYL.count,mvp2,mv2,colorB);
+}
+
+function computeBonds(positions, cutoff) {
+  const bonds=[], c2=cutoff*cutoff;
+  for(let i=0;i<positions.length;i++){
+    for(let j=i+1;j<positions.length;j++){
+      const dx=positions[i][0]-positions[j][0];
+      const dy=positions[i][1]-positions[j][1];
+      const dz=positions[i][2]-positions[j][2];
+      if(dx*dx+dy*dy+dz*dz<c2) bonds.push([i,j]);
+    }
+  }
+  return bonds;
+}
+
+function drawLines(pts, rgba, mvp) {
+  const data=new Float32Array(pts.flat());
+  gl.bindBuffer(gl.ARRAY_BUFFER,lineBuf);
+  gl.bufferData(gl.ARRAY_BUFFER,data,gl.DYNAMIC_DRAW);
+  gl.useProgram(lineProg);
+  const loc=gl.getAttribLocation(lineProg,'aPos');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0);
+  gl.uniformMatrix4fv(gl.getUniformLocation(lineProg,'uMVP'),false,mvp);
+  gl.uniform4fv(gl.getUniformLocation(lineProg,'uColor'),rgba);
+  gl.drawArrays(gl.LINES,0,pts.length);
+}
+
+// ─── Element colours & radii (muted CPK) ─────────────────────────────────────
+const CPK_COLOR = {
+  H:[0.88,0.88,0.88], C:[0.45,0.45,0.45], N:[0.35,0.45,0.88],
+  O:[0.88,0.30,0.30], B:[0.88,0.58,0.28], Si:[0.65,0.65,0.85],
+  S:[0.85,0.78,0.20], F:[0.25,0.80,0.25], Cl:[0.20,0.78,0.20],
+  P:[0.88,0.52,0.00], Fe:[0.76,0.36,0.18],Cu:[0.72,0.45,0.15],
+  Zn:[0.52,0.52,0.65],Al:[0.70,0.62,0.60],Mg:[0.50,0.82,0.00],
+  Ca:[0.22,0.82,0.00],Na:[0.62,0.32,0.88],K: [0.52,0.22,0.78],
+};
+const CPK_RAD  = {
+  H:0.25, C:0.40, N:0.40, O:0.40, B:0.46,
+  Si:0.50, S:0.44, F:0.35, Cl:0.44, P:0.46,
+};
+const elemColor = el => CPK_COLOR[el] || [0.60,0.60,0.70];
+const elemRad   = el => CPK_RAD[el]   || 0.42;
+
+// ─── Mouse interaction ────────────────────────────────────────────────────────
+
+canvas.addEventListener('mousedown', e=>{
+  if(e.button===0) mouse.down=true;
+  else if(e.button===2) mouse.rdown=true;
+  mouse.x=e.clientX; mouse.y=e.clientY;
+  e.preventDefault();
+});
+canvas.addEventListener('contextmenu', e=>e.preventDefault());
+canvas.addEventListener('mousemove', e=>{
+  if(!mouse.down && !mouse.rdown) return;
+  const dx=(e.clientX-mouse.x)/canvas.width;
+  const dy=(e.clientY-mouse.y)/canvas.height;
+  if(mouse.down){
+    const angle=Math.sqrt(dx*dx+dy*dy)*Math.PI*2.5;
+    if(angle>1e-6){
+      const ax=vnorm([-dy,dx,0]);
+      const half=angle/2, s=Math.sin(half);
+      const dq=[s*ax[0],s*ax[1],s*ax[2],Math.cos(half)];
+      cameraQuat=quatMul(dq,cameraQuat);
+    }
+  } else {
+    pan[0]+=dx*sceneRadius*2.8;
+    pan[1]-=dy*sceneRadius*2.8;
+  }
+  mouse.x=e.clientX; mouse.y=e.clientY;
+  render();
+});
+canvas.addEventListener('mouseup', ()=>{ mouse.down=false; mouse.rdown=false; });
+canvas.addEventListener('wheel', e=>{
+  zoom*=Math.exp(-e.deltaY*0.001);
+  zoom=Math.max(0.08,Math.min(12,zoom));
+  render();
+  e.preventDefault();
+},{passive:false});
+
+// ─── Touch support (for WebView) ──────────────────────────────────────────────
+canvas.addEventListener('touchstart', e=>{
+  lastTouch=e.touches[0]; e.preventDefault();
+},{passive:false});
+canvas.addEventListener('touchmove', e=>{
+  if(!lastTouch) return;
+  const t=e.touches[0];
+  const dx=(t.clientX-lastTouch.clientX)/canvas.width;
+  const dy=(t.clientY-lastTouch.clientY)/canvas.height;
+  const angle=Math.sqrt(dx*dx+dy*dy)*Math.PI*2.5;
+  if(angle>1e-6){
+    const ax=vnorm([-dy,dx,0]);
+    const half=angle/2,s=Math.sin(half);
+    const dq=[s*ax[0],s*ax[1],s*ax[2],Math.cos(half)];
+    cameraQuat=quatMul(dq,cameraQuat);
+  }
+  lastTouch=t; render(); e.preventDefault();
+},{passive:false});
+
+// ─── Scene data ───────────────────────────────────────────────────────────────
+window.updateScene = function(jsonStr) {
+  scene = typeof jsonStr==='string' ? JSON.parse(jsonStr) : jsonStr;
+
+  const pos=scene.positions;
+  if(!pos||!pos.length){ render(); return; }
+
+  // Centroid
+  sceneCenter=[0,0,0];
+  for(const p of pos){ sceneCenter[0]+=p[0]; sceneCenter[1]+=p[1]; sceneCenter[2]+=p[2]; }
+  sceneCenter=sceneCenter.map(v=>v/pos.length);
+
+  // Radius
+  sceneRadius=1;
+  for(const p of pos){ const d=vlen(vsub(p,sceneCenter)); if(d>sceneRadius) sceneRadius=d; }
+
+  // Compute bonds (cutoff 2.1 Å captures most covalent bonds)
+  scene.bonds=computeBonds(pos, 2.1);
+
+  // Build legend from unique elements
+  if(scene.species){
+    const seen=new Set(), rows=[];
+    for(const el of scene.species){
+      if(seen.has(el)) continue; seen.add(el);
+      const c=elemColor(el);
+      const hex='#'+c.map(v=>Math.round(v*255).toString(16).padStart(2,'0')).join('');
+      rows.push(
+        `<span style="display:inline-flex;align-items:center;gap:5px">` +
+        `<span style="width:11px;height:11px;border-radius:50%;background:${hex};` +
+        `border:1px solid rgba(255,255,255,0.18);display:inline-block"></span>` +
+        `<span>${el}</span></span>`
+      );
+    }
+    legendEl.innerHTML=rows.join('');
+  }
+
+  // Reset camera
+  cameraQuat=[0,0,0,1]; pan=[0,0]; zoom=1.0;
+  phEl.style.display='none';
+
+  // Info bar
+  if(scene.mode_info){
+    const m=scene.mode_info;
+    infoEl.textContent=
+      `Mode ${m.index+1}  ·  E = ${m.energy_meV.toFixed(2)} meV  ·  Sₖ = ${m.Sk.toFixed(5)}`;
+  }
+
+  render();
+};
+
+window.clearScene = function() {
+  scene=null;
+  phEl.style.display='';
+  infoEl.textContent='';
+  render();
+};
+
+// ─── Main render ──────────────────────────────────────────────────────────────
+function render() {
+  if(!gl) return;
+  gl.clearColor(0.118,0.118,0.180,1.0);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+
+  if(!scene||!scene.positions||!scene.positions.length) return;
+
+  const aspect=canvas.width/canvas.height;
+  const proj=m4(); m4perspective(proj, Math.PI/4, aspect, 0.05, 2000);
+
+  const camDist=(sceneRadius*2.6)/zoom;
+  const eye=[pan[0],pan[1],camDist];
+  const at =[pan[0],pan[1],0];
+
+  // View = LookAt * RotationQuat (rotates world around scene center)
+  const viewBase=m4(); m4lookAt(viewBase,eye,at,[0,1,0]);
+  const rotM=m4(); m4fromQuat(rotM,cameraQuat);
+
+  // Translate so scene center is at origin, apply rotation, apply view
+  // Achieved by: view = viewBase * R * T(-center)
+  const Tc=m4(); m4id(Tc);
+  Tc[12]=-sceneCenter[0]; Tc[13]=-sceneCenter[1]; Tc[14]=-sceneCenter[2];
+  const RT=m4(); m4mul(RT,rotM,Tc);
+  const view=m4(); m4mul(view,viewBase,RT);
+
+  const {positions, species, vectors, cell}=scene;
+
+  // Unit cell wireframe
+  if(cell&&cell.length===3){
+    const [a,b,c]=cell;
+    const O=[0,0,0];
+    const AB=vadd(a,b), AC=vadd(a,c), BC=vadd(b,c), ABC=vadd(AB,c);
+    const edges=[
+      O,a,  O,b,  O,c,
+      a,AB, a,AC, b,AB, b,BC, c,AC, c,BC,
+      AB,ABC, AC,ABC, BC,ABC
+    ];
+    const mvp=m4(); m4mul(mvp,proj,view);
+    drawLines(edges,[0.65,0.65,0.70,0.45],mvp);
+  }
+
+  // Bonds
+  if(scene.bonds){
+    for(const [i,j] of scene.bonds){
+      const elI=species?species[i]:'X', elJ=species?species[j]:'X';
+      drawBond(positions[i],positions[j],elemColor(elI),elemColor(elJ),view,proj);
+    }
+  }
+
+  // Atoms
+  for(let i=0;i<positions.length;i++){
+    const el=species?species[i]:'X';
+    drawSphere(positions[i], elemRad(el), elemColor(el), view, proj);
+  }
+
+  // Displacement arrows (already scaled & thresholded by Python)
+  const arrowRed=[0.96,0.22,0.22];
+  if(vectors){
+    for(let i=0;i<vectors.length;i++){
+      const v=vectors[i];
+      if(!v) continue;
+      if(v[0]**2+v[1]**2+v[2]**2 < 1e-10) continue;
+      drawArrow(positions[i], v, arrowRed, view, proj);
+    }
+  }
+}
+
+render();
+</script>
+</body>
+</html>
