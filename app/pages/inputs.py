@@ -94,7 +94,8 @@ WORKFLOWS = [
             "Huang–Rhys factors S<sub>k</sub> = ω<sub>k</sub> q<sub>k</sub><sup>2</sup>/2ℏ."
             "<br><br>"
             "<b>Requires:</b> GS structure + ES structure + GS phonons<br>"
-            "<i>Formats:</i> POSCAR/CONTCAR (VASP), OUTCAR or band.yaml (phonons)"
+            "<i>Formats:</i> POSCAR/CONTCAR (VASP), .xyz (standard or extended), "
+            "OUTCAR or band.yaml (phonons)"
         ),
     },
     {
@@ -110,7 +111,7 @@ WORKFLOWS = [
             "• <b>GS geometry</b>: both calculations at the GS minimum (standard vertical gradient)<br>"
             "• <b>ES geometry</b>: both calculations at the ES minimum (adiabatic correction)<br><br>"
             "<b>Requires:</b> GS forces + ES forces + GS phonons<br>"
-            "<i>Formats:</i> OUTCAR (VASP), .npy, .npz, or whitespace-delimited .dat/.txt"
+            "<i>Formats:</i> OUTCAR (VASP), .npy, .npz, whitespace-delimited .dat/.txt"
         ),
     },
     {
@@ -124,7 +125,8 @@ WORKFLOWS = [
             "to compute Huang–Rhys factors.<br><br>"
             "<b>Requires:</b> Frequencies + Normal modes + Atomic masses + "
             "GS/ES structures <i>or</i> GS/ES forces<br>"
-            "<i>Formats:</i> .npy · .npz · .dat · .txt"
+            "<i>Formats:</i> structures — POSCAR/CONTCAR, .xyz (standard or extended); "
+            "arrays — .npy · .npz · .dat · .txt"
         ),
     },
 ]
@@ -235,7 +237,7 @@ def _section(title, hint=""):
     return w, lay
 
 
-STRUCT_FILTER = "All Files (*);;Structure files (*.npy *.npz *.txt *.dat *.vasp)"
+STRUCT_FILTER = "All Files (*);;Structure files (*.npy *.npz *.txt *.dat *.vasp *.xyz)"
 PHONON_FILTER = "All Files (*);;Phonon files (*.yaml *.npy *.npz *.txt *.dat)"
 FORCE_FILTER  = "All Files (*);;Force files (*.npy *.npz *.txt *.dat)"
 ARRAY_FILTER  = "All Files (*);;Array files (*.npy *.npz *.txt *.dat)"
@@ -303,7 +305,8 @@ class Step2Files(QWidget):
         lay.addWidget(self._section_header("Structures"))
         lay.addWidget(self._make_picker(p, "structure_gs", "Ground state structure",
             "Relaxed GS geometry. Accepted: POSCAR / CONTCAR (VASP, any extension), "
-            ".npy array shape (Natoms, 3) in Å", STRUCT_FILTER))
+            ".xyz (standard or extended with Lattice=), .npy array (Natoms, 3) in Å",
+            STRUCT_FILTER))
         lay.addWidget(self._make_picker(p, "structure_es", "Excited state structure",
             "Relaxed ES geometry — same formats as above", STRUCT_FILTER))
 
@@ -418,7 +421,8 @@ class Step2Files(QWidget):
         sp_lay.addWidget(self._make_picker(
             self._pickers_vib_struct, "structure_gs", "Ground state structure",
             "Relaxed GS geometry. Accepted: POSCAR/CONTCAR (VASP), "
-            ".npy array shape (N_atoms, 3) in Å, .dat/.txt whitespace-delimited",
+            ".xyz (standard or extended with Lattice=), "
+            ".npy array (N_atoms, 3) in Å, .dat/.txt whitespace-delimited",
             STRUCT_FILTER))
         sp_lay.addWidget(self._make_picker(
             self._pickers_vib_struct, "structure_es", "Excited state structure",

@@ -153,7 +153,8 @@ def calculate_spectra_analytical(
             else:
                 R_gs, atoms, lattice = pl.ReadStructure(structure_gs)
                 results["atoms"] = atoms
-                results["lattice"] = lattice
+                if lattice is not None:
+                    results["lattice"] = lattice
         else:
             raise ValueError("Unsupported type for structure_gs. Must be a numpy array or a file path.")
         results["R_gs"] = R_gs  ## Units: Angstrom, an array of shape (N_atoms, 3)
@@ -174,7 +175,8 @@ def calculate_spectra_analytical(
                         raise ValueError("GS and ES atoms mismatch.")
                 else:
                     results["atoms"] = atoms
-                    results["lattice"] = lattice
+                    if lattice is not None:
+                        results["lattice"] = lattice
         else:
             raise ValueError("Unsupported type for structure_es. Must be a numpy array or a file path.")
         results["R_es"] = R_es  ## Units: Angstrom, an array of shape (N_atoms, 3)

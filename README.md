@@ -96,7 +96,7 @@ The **Mode Analysis** tab contains two sub-tabs:
 <td width="50%"><img src="docs/Displaced-squeezed%20oscillator%20approx.png" alt="Displaced-squeezed oscillator results" width="100%"></td>
 </tr>
 <tr>
-<td><em>Mode Analysis — interactive S<sub>k</sub> vs phonon energy scatter plot. Bubble size scales with S<sub>k</sub>; colour encodes the inverse participation ratio (IPR). Hover over any mode to see its index, frequency, S<sub>k</sub>, and IPR.</em></td>
+<td><em>Mode Analysis → Sk and IPR — interactive S<sub>k</sub> vs phonon energy scatter plot. Bubble size scales with S<sub>k</sub>; colour encodes the inverse participation ratio (IPR). Hover over any mode to see its index, frequency, S<sub>k</sub>, and IPR.</em></td>
 <td><em>Advanced → Squeezed Oscillator — mode-resolved squeezing parameters r<sub>k</sub> = ½ ln(ω<sub>ES,k</sub>/ω<sub>GS,k</sub>) and the resulting frequency-corrected emission and absorption spectral functions and lineshapes.</em></td>
 </tr>
 </table>
@@ -104,6 +104,10 @@ The **Mode Analysis** tab contains two sub-tabs:
 <img src="docs/compare%20results%20with%20from%20different%20theories.png" alt="Standard HR vs squeezed oscillator with experimental overlay" width="100%">
 
 *Advanced → Overlay — Standard HR (top row) and displaced–squeezed oscillator (bottom row) shown as spectral function A(E) and lineshape L(E) in a 4-panel view, with experimental emission overlaid and scaled for direct comparison.*
+
+<img src="docs/normal%20mode%20analysis.png" alt="Normal Mode Vectors WebGL viewer" width="100%">
+
+*Mode Analysis → Normal Mode Vectors — embedded WebGL viewer rendering phonon displacement vectors on the crystal structure. Atoms are CPK-coloured, covalent bonds are drawn automatically, and red arrows show the displacement pattern for the selected mode. Controls: mode index (auto-jumps to the highest S<sub>k</sub> mode), arrow scale (auto-set so the largest displacement ≈ 2 Å), and displacement threshold. Supports rotation (left drag), pan (right drag), and zoom (scroll). Export to VESTA via Save .vesta for further visualisation.*
 
 ---
 
@@ -388,6 +392,14 @@ If you use PLUMIPY in your research, please cite the following:
 
 5. *(this work — Monte Carlo emission sampling)*
    — Numerically stable Monte Carlo approach for PL lineshapes at any Huang–Rhys factor, bypassing the generating-function instability in the strong-coupling regime.
+
+### Normal mode vector visualisation
+
+The VESTA export logic in the Normal Mode Vectors viewer is based on the approach pioneered by:
+
+> Roy, A. *Phonopy_VESTA — Export Eigenvectors from Phonopy format to VESTA.* GitHub (2020). https://github.com/AdityaRoy-1996/Phonopy_VESTA
+
+The original script reads `band.yaml` and an existing `POSCAR.vesta` template, injects `VECTR`/`VECTT` blocks for each mode, and saves one `.vesta` file per band. PLUMIPY's implementation extends this by generating the full VESTA file from scratch (CELLP, STRUC, BOUND, SBOND, SITET, VECTR, VECTT, ATOMT) directly from the computed phonon data, without requiring a pre-existing template.
 
 ---
 

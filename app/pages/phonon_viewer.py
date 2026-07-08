@@ -129,7 +129,7 @@ class PhononViewerWidget(QWidget):
             self._mode_spin.setValue(best)
         self._render_btn.setEnabled(n_modes > 0)
         self._vesta_btn.setEnabled(
-            n_modes > 0 and "lattice" in results and "atoms" in results
+            n_modes > 0 and results.get("lattice") is not None and "atoms" in results
         )
         # Auto-scale: make the max displacement vector ~2.0 Å visible
         if n_modes > 0:
@@ -147,15 +147,22 @@ class PhononViewerWidget(QWidget):
 
     # ── private helpers ───────────────────────────────────────────────────────
     def _species_list(self) -> list[str]:
-        """Expand atoms dict {'C':4,'N':2} → ['C','C','C','C','N','N']."""
+        """Return per-atom element list from results.
+
+        atoms can be:
+          - list  : .xyz input — already per-atom in file order, return as-is
+          - dict  : POSCAR/CONTCAR — {element: count} in block order, expand
+        """
         atoms = self._results.get("atoms")
-        if not isinstance(atoms, dict):
-            n = len(self._results.get("R_gs", []))
-            return ["X"] * n
-        lst = []
-        for el, count in atoms.items():
-            lst.extend([el] * int(count))
-        return lst
+        if isinstance(atoms, list):
+            return [str(el) for el in atoms]
+        if isinstance(atoms, dict):
+            lst = []
+            for el, count in atoms.items():
+                lst.extend([el] * int(count))
+            return lst
+        n = len(self._results.get("R_gs", []))
+        return ["X"] * n
 
     def _render(self):
         r = self._results

@@ -1,3 +1,4 @@
+import re
 import numpy as np
 
 class ReadFiles:
@@ -5,15 +6,62 @@ class ReadFiles:
   def __init__(self):
     pass
 
+  def ReadStructureXYZ(self, path):
+    """
+    Reads atomic positions from a standard or extended .xyz file.
+
+    Standard XYZ:
+        Line 0 : number of atoms
+        Line 1 : comment (ignored if no Lattice keyword)
+        Line 2+: element  x  y  z  [Å, Cartesian]
+
+    Extended XYZ (ASE / OVITO style):
+        Line 1 comment carries key=value pairs; if a Lattice="…" field is
+        present its 9 values are interpreted as a row-major 3×3 lattice
+        matrix (a1 a2 a3  b1 b2 b3  c1 c2 c3).
+
+    Returns:
+        positions : (N, 3) float array, Cartesian Å
+        species   : list of element symbols, one per atom, in file order
+        lattice   : (3, 3) float array (row vectors), or None if not given
+    """
+    with open(path, 'r') as f:
+        lines = [l.rstrip('\n') for l in f.readlines()]
+
+    natoms = int(lines[0].strip())
+    comment = lines[1] if len(lines) > 1 else ""
+
+    # Parse extended-XYZ Lattice field if present
+    lattice = None
+    lat_match = re.search(r'Lattice\s*=\s*"([^"]+)"', comment, re.IGNORECASE)
+    if lat_match:
+        vals = [float(x) for x in lat_match.group(1).split()]
+        if len(vals) == 9:
+            lattice = np.array(vals, dtype=float).reshape(3, 3)
+
+    species, positions = [], []
+    for i in range(2, 2 + natoms):
+        parts = lines[i].split()
+        species.append(parts[0])
+        positions.append([float(parts[1]), float(parts[2]), float(parts[3])])
+
+    return np.array(positions, dtype=float), species, lattice
+
   def ReadStructure(self, path):
 
     """
-    Input:   1. path - Location of POSCAR or CONTCAR file as a string.
+    Input:   1. path - Location of POSCAR/CONTCAR or .xyz file as a string.
 
     Outputs: 1. Position vectors of all the atoms as numpy array of shape (total number of atoms, 3), where 3 is
                 the x,y and z space coordinates.
-             2. Dictionary of atomic species and there corresponding number of atoms.
+             2. Atomic species: dict {element: count} for POSCAR/CONTCAR,
+                or list [el, el, ...] (per-atom, file order) for .xyz.
+             3. Lattice vectors (3,3) array, or None for .xyz with no Lattice field.
     """
+    import os
+    if os.path.splitext(path)[1].lower() == '.xyz':
+        return self.ReadStructureXYZ(path)
+
     with open(path,'r') as file:
 
       lines = file.readlines()
