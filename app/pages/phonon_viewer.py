@@ -13,6 +13,8 @@ from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineSettings
 
+from plumipy.photoluminescence import Photoluminescence
+
 # ── path to the bundled HTML ───────────────────────────────────────────────────
 _HTML = os.path.join(os.path.dirname(__file__), "..", "html", "phonon_viewer.html")
 _HTML = os.path.abspath(_HTML)
@@ -32,17 +34,23 @@ class PhononViewerWidget(QWidget):
     Sub-tab for the Mode Analysis panel.
     Displays phonon displacement vectors on the crystal structure
     using an embedded WebGL renderer (no internet required).
+
+    For VG-type calculations (no structure in results), an optional
+    "Browse structure…" row is shown so the user can supply one.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._results = None
+        self._results        = None
+        self._ext_positions  = None   # (N,3) loaded from file when R_gs absent
+        self._ext_species    = None   # list[str]
+        self._ext_lattice    = None   # (3,3) or None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ── control bar ───────────────────────────────────────────────────────
+        # ── main control bar ──────────────────────────────────────────────────
         bar = QFrame()
         bar.setObjectName("info_card")
         bar_lay = QHBoxLayout(bar)
@@ -90,6 +98,34 @@ class PhononViewerWidget(QWidget):
 
         root.addWidget(bar)
 
+        # ── optional structure row (VG workflow only, hidden by default) ───────
+        self._struct_bar = QFrame()
+        self._struct_bar.setObjectName("info_card")
+        struct_lay = QHBoxLayout(self._struct_bar)
+        struct_lay.setContentsMargins(10, 4, 10, 4)
+        struct_lay.setSpacing(10)
+
+        lbl = QLabel(
+            "No structure in results (VG workflow) — upload a structure file to visualise modes:"
+        )
+        lbl.setStyleSheet("color: gray; font-style: italic;")
+        struct_lay.addWidget(lbl)
+
+        self._struct_btn = QPushButton("Browse structure…")
+        self._struct_btn.setToolTip(
+            "Load a POSCAR / CONTCAR / .vasp / .xyz file with atom positions"
+        )
+        self._struct_btn.clicked.connect(self._browse_structure)
+        struct_lay.addWidget(self._struct_btn)
+
+        self._struct_label = QLabel("No file loaded")
+        self._struct_label.setStyleSheet("color: gray;")
+        struct_lay.addWidget(self._struct_label)
+
+        struct_lay.addStretch()
+        self._struct_bar.setVisible(False)
+        root.addWidget(self._struct_bar)
+
         # ── WebGL view ────────────────────────────────────────────────────────
         self._view = QWebEngineView()
         self._view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -127,11 +163,17 @@ class PhononViewerWidget(QWidget):
         if "Sk" in results and n_modes:
             best = int(np.argmax(results["Sk"])) + 1
             self._mode_spin.setValue(best)
-        self._render_btn.setEnabled(n_modes > 0)
-        self._vesta_btn.setEnabled(
-            n_modes > 0 and results.get("lattice") is not None and "atoms" in results
-        )
-        # Auto-scale: make the max displacement vector ~2.0 Å visible
+
+        # Show structure picker when R_gs not provided (VG workflow)
+        needs_struct = "R_gs" not in results
+        self._struct_bar.setVisible(needs_struct)
+        if not needs_struct:
+            # Reset any previously loaded external structure
+            self._ext_positions = None
+            self._ext_species   = None
+            self._ext_lattice   = None
+
+        # Auto-scale using highest-Sk mode
         if n_modes > 0:
             best_idx = (int(np.argmax(results["Sk"])) if "Sk" in results else 0)
             max_norm = float(np.max(np.linalg.norm(results["modes_gs"][best_idx], axis=1)))
@@ -139,58 +181,123 @@ class PhononViewerWidget(QWidget):
                 suggested = round(2.0 / max_norm, 1)
                 self._scale_spin.setValue(float(np.clip(suggested, 0.1, 200.0)))
 
+        self._update_buttons()
+
     def clear(self):
-        self._results = None
+        self._results        = None
+        self._ext_positions  = None
+        self._ext_species    = None
+        self._ext_lattice    = None
+        self._struct_bar.setVisible(False)
+        self._struct_label.setText("No file loaded")
+        self._struct_label.setStyleSheet("color: gray;")
         self._render_btn.setEnabled(False)
         self._vesta_btn.setEnabled(False)
         self._run_js("if(window.clearScene) clearScene();")
 
-    # ── private helpers ───────────────────────────────────────────────────────
-    def _species_list(self) -> list[str]:
-        """Return per-atom element list from results.
+    # ── structure file browser (VG workflow) ──────────────────────────────────
+    def _browse_structure(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open structure file",
+            "",
+            "Structure files (*.vasp *.xyz POSCAR CONTCAR CONTCAR_*);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            pl = Photoluminescence()
+            pos, atoms, lat = pl.ReadStructure(path)
+            self._ext_positions = pos
+            self._ext_species   = self._expand_atoms(atoms, len(pos))
+            self._ext_lattice   = lat
+            name = os.path.basename(path)
+            self._struct_label.setText(name)
+            self._struct_label.setStyleSheet("")
+        except Exception as exc:
+            self._struct_label.setText(f"Error: {exc}")
+            self._struct_label.setStyleSheet("color: red;")
+            return
+        self._update_buttons()
 
-        atoms can be:
-          - list  : .xyz input — already per-atom in file order, return as-is
-          - dict  : POSCAR/CONTCAR — {element: count} in block order, expand
-        """
-        atoms = self._results.get("atoms")
+    # ── button state ──────────────────────────────────────────────────────────
+    def _update_buttons(self):
+        r = self._results
+        if r is None:
+            self._render_btn.setEnabled(False)
+            self._vesta_btn.setEnabled(False)
+            return
+        n_modes  = len(r.get("modes_gs", []))
+        has_pos  = "R_gs" in r or self._ext_positions is not None
+        _lat     = r.get("lattice")
+        lat      = _lat if _lat is not None else self._ext_lattice
+        has_spec = "atoms" in r or self._ext_species is not None
+        self._render_btn.setEnabled(n_modes > 0 and has_pos)
+        self._vesta_btn.setEnabled(n_modes > 0 and has_pos and lat is not None and has_spec)
+
+    # ── private helpers ───────────────────────────────────────────────────────
+    @staticmethod
+    def _expand_atoms(atoms, n: int) -> list[str]:
         if isinstance(atoms, list):
             return [str(el) for el in atoms]
         if isinstance(atoms, dict):
             lst = []
             for el, count in atoms.items():
-                lst.extend([el] * int(count))
+                lst.extend([str(el)] * int(count))
             return lst
-        n = len(self._results.get("R_gs", []))
         return ["X"] * n
+
+    def _species_list(self) -> list[str]:
+        """Per-atom element list — from results dict or externally loaded file."""
+        atoms = self._results.get("atoms") if self._results else None
+        if atoms is not None:
+            return self._expand_atoms(atoms, len(self._results.get("R_gs", [])))
+        if self._ext_species is not None:
+            return self._ext_species
+        n = len(self._ext_positions) if self._ext_positions is not None else 0
+        return ["X"] * n
+
+    def _get_positions(self) -> np.ndarray:
+        r = self._results
+        if r is not None and "R_gs" in r:
+            return r["R_gs"]
+        return self._ext_positions
+
+    def _get_lattice(self):
+        r = self._results
+        lat = r.get("lattice") if r else None
+        return lat if lat is not None else self._ext_lattice
 
     def _render(self):
         r = self._results
         if r is None or "modes_gs" not in r:
             return
 
+        positions = self._get_positions()
+        if positions is None:
+            return
+
         idx    = self._mode_spin.value() - 1
         scale  = self._scale_spin.value()
         thresh = self._thresh_spin.value()
 
-        positions = r["R_gs"].tolist()
-        species   = self._species_list()
-        mode_vec  = r["modes_gs"][idx]          # (N_atoms, 3)
+        species  = self._species_list()
+        mode_vec = r["modes_gs"][idx]          # (N_atoms, 3)
 
         # Scale vectors; zero out those below threshold
         vectors = []
-        for i, v in enumerate(mode_vec):
-            sv = (v * scale).tolist()
+        for v in mode_vec:
             norm = float(np.linalg.norm(v))
-            vectors.append(sv if norm >= thresh else [0.0, 0.0, 0.0])
+            vectors.append((v * scale).tolist() if norm >= thresh else [0.0, 0.0, 0.0])
 
-        cell = r["lattice"].tolist() if "lattice" in r else None
+        lat  = self._get_lattice()
+        cell = lat.tolist() if lat is not None else None
 
         Ek = r.get("Ek_gs", np.zeros(len(mode_vec)))
         Sk = r.get("Sk",    np.zeros(len(mode_vec)))
 
         payload = {
-            "positions": positions,
+            "positions": positions.tolist(),
             "species":   species,
             "vectors":   vectors,
             "cell":      cell,
@@ -206,7 +313,9 @@ class PhononViewerWidget(QWidget):
 
     def _save_vesta(self):
         r = self._results
-        if r is None or "lattice" not in r or "atoms" not in r:
+        if r is None:
+            return
+        if self._get_positions() is None or self._get_lattice() is None:
             return
 
         idx    = self._mode_spin.value() - 1
@@ -227,8 +336,8 @@ class PhononViewerWidget(QWidget):
 
     def _build_vesta(self, mode_idx: int, scale: float, thresh: float) -> str:
         r        = self._results
-        lat      = r["lattice"]
-        R_cart   = r["R_gs"]
+        lat      = self._get_lattice()
+        R_cart   = self._get_positions()
         species  = self._species_list()
         mode_vec = r["modes_gs"][mode_idx]
 

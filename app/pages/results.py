@@ -12,6 +12,8 @@ from PyQt6.QtGui import QFont
 
 from app.widgets.plot_canvas import PlotCanvas, DARK
 from app.pages.phonon_viewer import PhononViewerWidget
+from app.pages.force_viewer import ForceViewerWidget
+from app.pages.geom_diff_viewer import GeomDiffViewerWidget
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Energy unit helpers
@@ -415,6 +417,10 @@ class SpectralFunctionTab(QWidget):
         S_E   = std["S_E"]
         Ek_u  = convert_energy(Ek_gs, unit)
 
+        # Remove stale twin axes from previous renders before creating a fresh one
+        for _a in self._canvas.fig.axes:
+            if _a is not self._canvas.ax:
+                _a.remove()
         ax = self._canvas.ax
         ax.cla()
         ax2 = ax.twinx()
@@ -432,7 +438,7 @@ class SpectralFunctionTab(QWidget):
         bar_width = (Ek_u.max() - Ek_u.min()) * 0.012 if len(Ek_u) > 1 else 1.0
         bars = ax2.bar(Ek_u, Sk, width=bar_width,
                        color=DARK["red"], alpha=0.7, label="Sₖ  (per mode)", zorder=2)
-        ax2.set_ylabel("Huang–Rhys factor  Sₖ  (per mode)", color=DARK["red"])
+        ax2.set_ylabel("Huang–Rhys factor  Sₖ  (per mode)", color=DARK["red"], labelpad=12)
         ax2.tick_params(axis="y", colors=DARK["red"])
 
         ax.set_title(
@@ -975,6 +981,14 @@ class _SkScatterTab(QWidget):
         freqs_thz = Ek / 4.13566
         freqs_cm  = Ek * 8.0655
 
+        # Remove cursor before clearing axes — scatter it references is about to be deleted
+        if self._cursor:
+            try:
+                self._cursor.remove()
+            except Exception:
+                pass
+            self._cursor = None
+
         if self._cbar is not None:
             try:
                 self._cbar.remove()
@@ -1006,12 +1020,6 @@ class _SkScatterTab(QWidget):
         hc   = self._hc
         card = self._hover_card
 
-        if self._cursor:
-            try:
-                self._cursor.remove()
-            except Exception:
-                pass
-
         self._cursor = mplcursors.cursor(sc, hover=True)
 
         @self._cursor.connect("add")
@@ -1042,6 +1050,281 @@ class _SkScatterTab(QWidget):
             card.setVisible(False)
 
 
+class _RestoringForceTab(QWidget):
+    """Bar chart of Fk = −ωk² qk vs phonon energy (inner sub-tab of ModeAnalysisTab)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._results    = None
+        self._cursor_fk  = None
+        self._cursor_qk  = None
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(8)
+
+        info = QLabel("Hover over either plot — mode details appear below")
+        info.setObjectName("hint_label")
+        lay.addWidget(info)
+
+        self._canvas = PlotCanvas(nrows=2, ncols=1, figsize=(9, 9))
+        lay.addWidget(self._canvas, 1)
+
+        self._hover_card = QFrame()
+        self._hover_card.setObjectName("info_card")
+        self._hover_card.setVisible(False)
+        hc_lay = QHBoxLayout(self._hover_card)
+        hc_lay.setSpacing(24)
+        self._hc = {}
+        for key in ["Mode #", "Energy (meV)", "Freq (THz)", "Freq (cm⁻¹)", "Fₖ", "qₖ"]:
+            col = QVBoxLayout(); col.setSpacing(2)
+            v = QLabel("—"); v.setObjectName("field_label")
+            v.setStyleSheet("color:#cba6f7; font-size:14px; font-weight:bold;")
+            lbl = QLabel(key); lbl.setObjectName("hint_label")
+            col.addWidget(v); col.addWidget(lbl)
+            hc_lay.addLayout(col)
+            self._hc[key] = v
+        hc_lay.addStretch()
+        lay.addWidget(self._hover_card)
+
+    def populate(self, results: dict):
+        self._results = results
+        self._replot()
+
+    def clear(self):
+        self._results = None
+        for attr in ("_cursor_fk", "_cursor_qk"):
+            c = getattr(self, attr)
+            if c:
+                try:
+                    c.remove()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+        for ax in self._canvas.axes:
+            ax.cla()
+        self._canvas.draw()
+        self._hover_card.setVisible(False)
+
+    def _replot(self):
+        if self._results is None:
+            return
+        r = self._results
+        if "qk" not in r or "wk_gs" not in r:
+            return
+
+        qk        = r["qk"]                         # √amu · Å
+        Fk        = -r["wk_gs"] ** 2 * qk           # meV / (√amu · Å)
+        Ek        = r["Ek_gs"]                       # meV
+        freqs_thz = Ek / 4.13566
+        freqs_cm  = Ek * 8.0655
+
+        # Remove both cursors before clearing axes
+        for attr in ("_cursor_fk", "_cursor_qk"):
+            c = getattr(self, attr)
+            if c:
+                try:
+                    c.remove()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
+        ax1, ax2 = self._canvas.axes[0], self._canvas.axes[1]
+        ax1.cla()
+        ax2.cla()
+
+        colors_fk = [DARK["blue"] if f >= 0 else DARK["red"] for f in Fk]
+        colors_qk = [DARK["blue"] if q >= 0 else DARK["red"] for q in qk]
+
+        # ── Top: Fk lollipop ────────────────────────────────────────────────
+        ax1.vlines(Ek, 0, Fk, colors=colors_fk, linewidth=1.1, alpha=0.80, zorder=2)
+        ax1.axhline(0, color=DARK["spine"], lw=0.9, zorder=1)
+        ax1.set_ylabel(
+            r"$F_k = -\omega_k^2\,q_k$"
+            "\n"
+            r"$\left(\mathrm{meV}\cdot(\sqrt{\mathrm{amu}}\cdot\mathrm{\AA})^{-1}\right)$",
+            color=DARK["text"],
+        )
+        ax1.set_title(
+            r"Mode-resolved restoring force  $F_k = -\omega_k^2\,q_k$",
+            color=DARK["text"],
+        )
+
+        from matplotlib.patches import Patch
+        ax1.legend(
+            handles=[
+                Patch(color=DARK["blue"], alpha=0.80, label=r"$F_k > 0$"),
+                Patch(color=DARK["red"],  alpha=0.80, label=r"$F_k < 0$"),
+            ],
+            framealpha=0.3, labelcolor=DARK["text"], fontsize=9,
+            facecolor=DARK["axes_bg"], edgecolor=DARK["spine"],
+        )
+        ax1.tick_params(labelbottom=False)
+
+        # ── Bottom: qk lollipop ─────────────────────────────────────────────
+        ax2.vlines(Ek, 0, qk, colors=colors_qk, linewidth=1.1, alpha=0.80, zorder=2)
+        ax2.axhline(0, color=DARK["spine"], lw=0.9, zorder=1)
+        ax2.set_xlabel(r"Phonon energy  $E_k$  (meV)", color=DARK["text"])
+        ax2.set_ylabel(
+            r"$q_k$  $(\sqrt{\mathrm{amu}}\cdot\mathrm{\AA})$",
+            color=DARK["text"],
+        )
+        ax2.set_title(
+            r"Mode displacement  $q_k$",
+            color=DARK["text"],
+        )
+        ax2.legend(
+            handles=[
+                Patch(color=DARK["blue"], alpha=0.80, label=r"$q_k > 0$"),
+                Patch(color=DARK["red"],  alpha=0.80, label=r"$q_k < 0$"),
+            ],
+            framealpha=0.3, labelcolor=DARK["text"], fontsize=9,
+            facecolor=DARK["axes_bg"], edgecolor=DARK["spine"],
+        )
+
+        self._canvas.fig.tight_layout(h_pad=2.0)
+        self._canvas.draw()
+
+        hc   = self._hc
+        card = self._hover_card
+
+        def _style_ann(sel):
+            sel.annotation.get_bbox_patch().set(
+                fc=DARK["axes_bg"], ec=DARK["spine"], alpha=0.92
+            )
+            sel.annotation.set_color(DARK["text"])
+            sel.annotation.set_fontsize(10)
+
+        # Fk cursor
+        sc_fk = ax1.scatter(Ek, Fk, s=18, alpha=0, zorder=3)
+        self._cursor_fk = mplcursors.cursor(sc_fk, hover=True)
+
+        @self._cursor_fk.connect("add")
+        def on_add_fk(sel):
+            i = sel.index
+            sel.annotation.set_text(
+                f"Mode #{i + 1}\n"
+                f"Energy: {Ek[i]:.3f} meV\n"
+                f"Freq: {freqs_thz[i]:.3f} THz  /  {freqs_cm[i]:.1f} cm⁻¹\n"
+                f"Fk: {Fk[i]:.6f}"
+            )
+            _style_ann(sel)
+            hc["Mode #"].setText(f"#{i + 1}")
+            hc["Energy (meV)"].setText(f"{Ek[i]:.4f}")
+            hc["Freq (THz)"].setText(f"{freqs_thz[i]:.4f}")
+            hc["Freq (cm⁻¹)"].setText(f"{freqs_cm[i]:.2f}")
+            hc["Fₖ"].setText(f"{Fk[i]:.6f}")
+            hc["qₖ"].setText(f"{qk[i]:.6f}")
+            card.setVisible(True)
+
+        @self._cursor_fk.connect("remove")
+        def on_remove_fk(sel):
+            card.setVisible(False)
+
+        # qk cursor
+        sc_qk = ax2.scatter(Ek, qk, s=18, alpha=0, zorder=3)
+        self._cursor_qk = mplcursors.cursor(sc_qk, hover=True)
+
+        @self._cursor_qk.connect("add")
+        def on_add_qk(sel):
+            i = sel.index
+            sel.annotation.set_text(
+                f"Mode #{i + 1}\n"
+                f"Energy: {Ek[i]:.3f} meV\n"
+                f"Freq: {freqs_thz[i]:.3f} THz  /  {freqs_cm[i]:.1f} cm⁻¹\n"
+                f"qk: {qk[i]:.6f}"
+            )
+            _style_ann(sel)
+            hc["Mode #"].setText(f"#{i + 1}")
+            hc["Energy (meV)"].setText(f"{Ek[i]:.4f}")
+            hc["Freq (THz)"].setText(f"{freqs_thz[i]:.4f}")
+            hc["Freq (cm⁻¹)"].setText(f"{freqs_cm[i]:.2f}")
+            hc["Fₖ"].setText(f"{Fk[i]:.6f}")
+            hc["qₖ"].setText(f"{qk[i]:.6f}")
+            card.setVisible(True)
+
+        @self._cursor_qk.connect("remove")
+        def on_remove_qk(sel):
+            card.setVisible(False)
+
+
+class _EnergyDistTab(QWidget):
+    """Γ-point energy level diagram + Gaussian-broadened mode density."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._results = None
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(4)
+
+        self._canvas = PlotCanvas(nrows=1, ncols=2, figsize=(10, 5.5))
+        lay.addWidget(self._canvas, 1)
+
+    def populate(self, results: dict):
+        self._results = results
+        self._replot()
+
+    def clear(self):
+        self._results = None
+        for ax in self._canvas.axes:
+            ax.cla()
+        self._canvas.draw()
+
+    def _replot(self):
+        if self._results is None or "Ek_gs" not in self._results:
+            return
+
+        Ek = self._results["Ek_gs"]
+        n  = len(Ek)
+
+        ax_b, ax_k = self._canvas.axes[0], self._canvas.axes[1]
+        ax_b.cla()
+        ax_k.cla()
+
+        # ── left: Γ-point level diagram ──────────────────────────────────────
+        ax_b.hlines(Ek, 0.15, 0.85,
+                    colors=DARK["purple"], linewidth=0.85, alpha=0.65, zorder=2)
+        ax_b.set_xlim(0, 1)
+        ax_b.set_xticks([0.5])
+        ax_b.set_xticklabels(["$\\Gamma$"], color=DARK["text"], fontsize=11)
+        ax_b.tick_params(axis="x", length=0)
+        ax_b.set_ylabel(r"Phonon energy  $E_k$  (meV)", color=DARK["text"])
+        ax_b.set_title(r"$\Gamma$-point levels  ($N=" + str(n) + r"$)",
+                       color=DARK["text"], fontsize=9)
+
+        # ── right: Gaussian-broadened mode density ───────────────────────────
+        sigma  = max((float(Ek.max()) - float(Ek.min())) * 0.015, 2.0)
+        E_lo   = max(0.0, float(Ek.min()) - 3 * sigma)
+        E_hi   = float(Ek.max()) + 3 * sigma
+        E_grid = np.linspace(E_lo, E_hi, 600)
+        dens   = np.sum(
+            np.exp(-0.5 * ((E_grid[:, None] - Ek[None, :]) / sigma) ** 2),
+            axis=1,
+        )
+        dens /= dens.max()
+
+        ax_k.fill_betweenx(E_grid, 0, dens, alpha=0.28, color=DARK["purple"])
+        ax_k.plot(dens, E_grid, color=DARK["purple"], lw=1.6)
+        ax_k.set_xlabel("Mode density  (a.u.)", color=DARK["text"])
+        ax_k.set_title(
+            fr"Gaussian-broadened density  ($\sigma = {sigma:.1f}$ meV)",
+            color=DARK["text"], fontsize=9,
+        )
+        ax_k.set_xlim(left=0)
+        ax_k.tick_params(axis="y", labelleft=False)
+
+        # Sync y-limits
+        pad  = max(5.0, sigma)
+        ymin = max(0.0, float(Ek.min()) - pad)
+        ymax = float(Ek.max()) + pad
+        ax_b.set_ylim(ymin, ymax)
+        ax_k.set_ylim(ymin, ymax)
+
+        self._canvas.draw()
+
+
 class ModeAnalysisTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1055,14 +1338,20 @@ class ModeAnalysisTab(QWidget):
         lay.addWidget(self._tabs, 1)
 
         self._sk_tab      = _SkScatterTab()
+        self._edist_tab   = _EnergyDistTab()
         self._phonon_tab  = PhononViewerWidget()
 
         self._tabs.addTab(self._sk_tab,     "Sk and IPR")
+        self._tabs.addTab(self._edist_tab,  "Energy Distribution")
         self._tabs.addTab(self._phonon_tab, "Normal Mode Vectors")
 
     def populate(self, results: dict):
         self._sk_tab.populate(results)
-        if "modes_gs" in results and "R_gs" in results:
+        if "Ek_gs" in results:
+            self._edist_tab.populate(results)
+        else:
+            self._edist_tab.clear()
+        if "modes_gs" in results:
             self._phonon_tab.set_results(results)
         else:
             self._phonon_tab.clear()
@@ -1073,7 +1362,40 @@ def plt_colormap(norm_values):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Tab 6 – Advanced / generating function / squeezed
+# Tab 6 – Displacement Viewer (Force Vectors + Geometry ΔR)
+# ─────────────────────────────────────────────────────────────────────────────
+class DisplacementViewerTab(QWidget):
+    """Combined tab with sub-tabs for force vectors (VG) and geometry ΔR (AA)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        self._tabs = QTabWidget()
+        self._tabs.setTabPosition(QTabWidget.TabPosition.North)
+        lay.addWidget(self._tabs, 1)
+
+        self._force_tab = ForceViewerWidget()
+        self._geom_tab  = GeomDiffViewerWidget()
+
+        self._tabs.addTab(self._force_tab, "Force Vectors")
+        self._tabs.addTab(self._geom_tab,  "Geometry  ΔR")
+
+    def populate(self, results: dict):
+        if "F_gs" in results or "F_es" in results:
+            self._force_tab.set_results(results)
+        else:
+            self._force_tab.clear()
+        if "R_gs" in results and "R_es" in results:
+            self._geom_tab.set_results(results)
+        else:
+            self._geom_tab.clear()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tab 7 – Advanced / generating function / squeezed
 # ─────────────────────────────────────────────────────────────────────────────
 class AdvancedTab(QWidget):
     def __init__(self, parent=None):
@@ -1494,6 +1816,8 @@ class ResultsPage(QWidget):
         self._tab_emission = EmissionTab()
         self._tab_absorb   = AbsorptionTab()
         self._tab_modes    = ModeAnalysisTab()
+        self._tab_restore  = _RestoringForceTab()
+        self._tab_displace = DisplacementViewerTab()
         self._tab_advanced = AdvancedTab()
 
         self._tabs.addTab(self._tab_overview, "ℹ  Overview")
@@ -1501,6 +1825,8 @@ class ResultsPage(QWidget):
         self._tabs.addTab(self._tab_emission, "Emission")
         self._tabs.addTab(self._tab_absorb,   "Absorption")
         self._tabs.addTab(self._tab_modes,    "Mode Analysis")
+        self._tabs.addTab(self._tab_restore,  "Restoring Force")
+        self._tabs.addTab(self._tab_displace, "Displacement Viewer")
         self._tabs.addTab(self._tab_advanced, "Advanced")
 
         # Wire export callbacks so tabs can write back to results + HDF5
@@ -1528,6 +1854,11 @@ class ResultsPage(QWidget):
         self._tab_emission.populate(results)
         self._tab_absorb.populate(results)
         self._tab_modes.populate(results)
+        if "qk" in results and "wk_gs" in results:
+            self._tab_restore.populate(results)
+        else:
+            self._tab_restore.clear()
+        self._tab_displace.populate(results)
         self._tab_advanced.populate(results)
 
         self._tabs.setCurrentIndex(0)
