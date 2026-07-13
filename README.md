@@ -16,6 +16,9 @@ PLUMIPY implements the Huang–Rhys formalism and its extensions to compute vibr
 - Mode-resolved Huang–Rhys factors S<sub>k</sub>, total HR factor, Debye–Waller factor
 - Inverse participation ratio (IPR) per mode
 - **Normal mode vector viewer** — interactive WebGL 3D renderer of phonon displacement vectors on the crystal structure, with CPK-coloured atoms, bonds, and VESTA export; no internet required
+- **Restoring Force tab** — dual lollipop charts of the mode-resolved restoring force F<sub>k</sub> = −ω<sub>k</sub>²·q<sub>k</sub> and mode displacement q<sub>k</sub> vs phonon energy, with hover tooltips
+- **Energy Distribution sub-tab** — Γ-point phonon energy level diagram and Gaussian-broadened mode density side by side
+- **Displacement Viewer tab** — WebGL visualisation of (a) GS/ES/ΔF force vectors on the crystal (Vertical Gradient workflow) and (b) geometry displacement ΔR = R<sub>ES</sub> − R<sub>GS</sub> (Adiabatic Approximation workflow), both with scale/threshold controls and VESTA export
 - Three workflows:
   - **Adiabatic** (structure-based): ΔR projected onto phonon modes
   - **Vertical gradient** (force-based): ΔF projected onto phonon modes
@@ -69,12 +72,23 @@ The GUI walks you through a four-step wizard:
 3. **Parameters** — ZPL, broadening (σ, γ), temperature, mode subtraction
 4. **Advanced** — Monte Carlo, squeezed oscillator, HDF5 export, experimental overlay
 
-Results are displayed in tabbed panels (Overview, S(E)/S<sub>k</sub>, Emission, Absorption, Mode Analysis, Advanced). Up to 3 calculations can be saved and compared side-by-side.
+Results are displayed in tabbed panels (Overview, S(E)/S<sub>k</sub>, Emission, Absorption, Mode Analysis, Restoring Force, Displacement Viewer, Advanced). Up to 3 calculations can be saved and compared side-by-side.
 
-The **Mode Analysis** tab contains two sub-tabs:
+The **Mode Analysis** tab contains three sub-tabs:
 
 - **Sk and IPR** — interactive scatter plot of S<sub>k</sub> vs phonon energy; bubble size scales with S<sub>k</sub>, colour encodes IPR; hover tooltips report mode index, frequency, S<sub>k</sub>, and IPR.
-- **Normal Mode Vectors** — embedded WebGL viewer that renders the phonon displacement vectors of any selected mode directly on the crystal structure. Features CPK-coloured atoms, covalent bonds, unit-cell wireframe, red displacement arrows, and an element legend. Controls: mode index, arrow scale (auto-set so the largest displacement ≈ 2 Å), displacement threshold. Optional **Save .vesta** exports a VESTA file with CELLP, STRUC, BOUND, SBOND (bond cutoffs from covalent radii), SITET, VECTR, and VECTT — open directly in VESTA to inspect and render.
+- **Energy Distribution** — left panel shows a Γ-point phonon energy level diagram (horizontal lines at each E<sub>k</sub>); right panel shows the Gaussian-broadened mode density (KDE), giving an at-a-glance view of which energy regions are most densely populated.
+- **Normal Mode Vectors** — embedded WebGL viewer that renders the phonon displacement vectors of any selected mode directly on the crystal structure. Features CPK-coloured atoms, covalent bonds, unit-cell wireframe, red displacement arrows, and an element legend. Controls: mode index, arrow scale (auto-set so the largest displacement ≈ 2 Å), displacement threshold. For Vertical Gradient calculations (no structure in results) an optional structure file picker is shown. Optional **Save .vesta** exports a VESTA file with CELLP, STRUC, BOUND, SBOND (bond cutoffs from covalent radii), SITET, VECTR, and VECTT — open directly in VESTA to inspect and render.
+
+The **Restoring Force** tab shows two stacked lollipop charts:
+
+- **F<sub>k</sub> vs E<sub>k</sub>** — mode-resolved restoring force F<sub>k</sub> = −ω<sub>k</sub>²·q<sub>k</sub> in meV·(√amu·Å)⁻¹; blue stems for F<sub>k</sub> > 0, red for F<sub>k</sub> < 0.
+- **q<sub>k</sub> vs E<sub>k</sub>** — mode displacement in √amu·Å; same colour convention. Hover tooltips on either chart populate a summary card showing mode index, energy, frequency, F<sub>k</sub>, and q<sub>k</sub>.
+
+The **Displacement Viewer** tab contains two sub-tabs, both using the same WebGL renderer:
+
+- **Force Vectors** (Vertical Gradient workflow) — renders GS forces, ES forces, or ΔF = F<sub>ES</sub> − F<sub>GS</sub> as arrows on a user-supplied structure. Controls: force selection, arrow scale, magnitude threshold, Save .vesta.
+- **Geometry ΔR** (Adiabatic Approximation workflow) — renders ΔR = R<sub>ES</sub> − R<sub>GS</sub> displacement vectors on the ground-state structure; scale is auto-set so the largest arrow ≈ 2 Å. Requires no additional file input. Save .vesta supported.
 
 ### Screenshots
 
