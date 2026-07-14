@@ -227,8 +227,6 @@ def calculate_spectra_analytical(
             extension = Path(phonons_gs).suffix.lower()
             if extension in [".yaml"]:
                 masses, freqs_gs, modes_gs = pl.ReadPhononsPhonopy(phonons_gs)
-                freqs_gs = freqs_gs[:int(freqs_gs.shape[0]/2)]
-                modes_gs = modes_gs[:int(modes_gs.shape[0]/2),...]
             else:
                 masses, freqs_gs, modes_gs = pl.ReadPhononsVasp(phonons_gs)
             freqs_gs[freqs_gs <= 0] = 1e-6  ## Replace zero or negative frequencies with a small positive value to avoid issues in calculations
@@ -244,8 +242,6 @@ def calculate_spectra_analytical(
             extension = Path(phonons_es).suffix.lower()
             if extension in [".yaml"]:
                 masses, freqs_es, modes_es = pl.ReadPhononsPhonopy(phonons_es)
-                freqs_es = freqs_es[:int(freqs_es.shape[0]/2)]
-                modes_es = modes_es[:int(modes_es.shape[0]/2),...]
             else:
                 masses, freqs_es, modes_es = pl.ReadPhononsVasp(phonons_es)
             freqs_es[freqs_es <= 0] = 1e-6  ## Replace zero or negative frequencies with a small positive value to avoid issues in calculations

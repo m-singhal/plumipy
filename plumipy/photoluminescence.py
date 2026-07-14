@@ -128,7 +128,9 @@ class ReadFiles:
     freqs = np.array(freqs).astype(float)
     freqs[freqs<0] = 0
     normal_modes = np.array([[[float(x.strip(',')) for x in sublist] for sublist in outer] for outer in normal_modes])
-    return atomic_masses, freqs, normal_modes
+    # band.yaml may contain multiple q-points (e.g. Γ→Γ path); only the first 3N modes belong to Γ.
+    n_modes = 3 * total_atoms
+    return atomic_masses, freqs[:n_modes], normal_modes[:n_modes]
 
   
   def ReadPhononsVasp(self, path):
