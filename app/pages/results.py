@@ -14,6 +14,7 @@ from app.widgets.plot_canvas import PlotCanvas, DARK
 from app.pages.phonon_viewer import PhononViewerWidget
 from app.pages.force_viewer import ForceViewerWidget
 from app.pages.geom_diff_viewer import GeomDiffViewerWidget
+from app.pages.phonon_projection import PhononProjectionWidget
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Energy unit helpers
@@ -1340,10 +1341,12 @@ class ModeAnalysisTab(QWidget):
         self._sk_tab      = _SkScatterTab()
         self._edist_tab   = _EnergyDistTab()
         self._phonon_tab  = PhononViewerWidget()
+        self._proj_tab    = PhononProjectionWidget()
 
         self._tabs.addTab(self._sk_tab,     "Sk and IPR")
         self._tabs.addTab(self._edist_tab,  "Energy Distribution")
         self._tabs.addTab(self._phonon_tab, "Normal Mode Vectors")
+        self._tabs.addTab(self._proj_tab,   "Mode Projection")
 
     def populate(self, results: dict):
         self._sk_tab.populate(results)
