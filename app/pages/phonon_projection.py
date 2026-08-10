@@ -6,8 +6,9 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame, QFileDialog, QSpinBox,
-    QSizePolicy,
+    QPushButton, QFrame, QFileDialog, QSpinBox, QDoubleSpinBox,
+    QSizePolicy, QTableWidget, QTableWidgetItem, QHeaderView,
+    QScrollArea,
 )
 from PyQt6.QtCore import Qt
 
@@ -70,7 +71,7 @@ def parse_yaml(path: str) -> dict:
 
 
 def parse_outcar(path: str) -> dict:
-    """Parse VASP OUTCAR → masses, freqs (THz), modes, species, positions (Å)."""
+    """Parse VASP OUTCAR → masses, freqs (THz), modes, species, positions (Å), lattice."""
     with open(path) as f:
         lines = [l.strip() for l in f]
 
@@ -82,15 +83,23 @@ def parse_outcar(path: str) -> dict:
             if m and m.group(1) not in titel_species:
                 titel_species.append(m.group(1))
 
-    ions_line = next(l for l in lines if 'ions per type' in l)
-    counts    = list(map(int, ions_line.split('=')[1].split()))
-    species   = [sp for sp, c in zip(titel_species, counts) for _ in range(c)]
-    N         = len(species)
+    ions_line_idx = next(i for i, l in enumerate(lines) if 'ions per type' in l)
+    ions_line     = lines[ions_line_idx]
+    counts        = list(map(int, ions_line.split('=')[1].split()))
+    species       = [sp for sp, c in zip(titel_species, counts) for _ in range(c)]
+    N             = len(species)
 
     # Masses
-    mass_idx = lines.index("Mass of Ions in am")
+    mass_idx   = lines.index("Mass of Ions in am")
     raw_masses = np.array(lines[mass_idx + 1].split()[2:], dtype=float)
-    masses = np.repeat(raw_masses, counts)
+    masses     = np.repeat(raw_masses, counts)
+
+    # Supercell lattice — first occurrence of "direct lattice vectors" AFTER "ions per type"
+    lat_idx = next(
+        i for i, l in enumerate(lines)
+        if i > ions_line_idx and 'direct lattice vectors' in l
+    )
+    lattice = np.array([_floats(lines[lat_idx + j + 1])[:3] for j in range(3)])
 
     # Phonon block bounds
     idx = next(i for i, l in enumerate(lines)
@@ -116,7 +125,7 @@ def parse_outcar(path: str) -> dict:
     modes = np.array(modes, dtype=float)
     srt   = np.argsort(freqs)
     return dict(masses=masses, freqs=freqs[srt], modes=modes[srt],
-                species=species, positions=positions, source='outcar')
+                species=species, positions=positions, lattice=lattice, source='outcar')
 
 
 def parse_numeric(modes_path: str, energies_path: str) -> dict:
@@ -143,26 +152,58 @@ def parse_numeric(modes_path: str, energies_path: str) -> dict:
 # ── Atom mapping ──────────────────────────────────────────────────────────────
 
 def map_atoms(pos_p: np.ndarray, pos_d: np.ndarray,
+              lat_p: np.ndarray | None = None,
+              lat_d: np.ndarray | None = None,
               threshold: float = 0.5) -> tuple[np.ndarray, list[int], list[int]]:
     """
     Nearest-neighbour matching: defect atom i → pristine atom d2p[i].
     d2p[i] = -1  when atom i is an interstitial (no pristine atom within threshold).
-    vacancies: pristine indices unmatched by any defect atom.
-    """
-    dists = np.linalg.norm(
-        pos_d[:, None, :] - pos_p[None, :, :], axis=2)   # (N_D, N_P)
 
-    d2p       = np.full(len(pos_d), -1, dtype=int)
+    When lat_p and lat_d are provided (3×3 Å matrices) the matching uses the
+    minimum-image convention in fractional coordinates so that PBC and
+    different cell origins are handled correctly.
+    """
+    N_D = len(pos_d)
+    N_P = len(pos_p)
+    d2p       = np.full(N_D, -1, dtype=int)
     matched_p : set[int] = set()
 
-    for i in range(len(pos_d)):
-        j = int(np.argmin(dists[i]))
-        if dists[i, j] < threshold:
-            d2p[i] = j
-            matched_p.add(j)
+    if lat_p is not None and lat_d is not None:
+        inv_lat_p = np.linalg.inv(lat_p)
+        inv_lat_d = np.linalg.inv(lat_d)
+        frac_p = (pos_p @ inv_lat_p) % 1.0   # (N_P, 3)
+        frac_d = (pos_d @ inv_lat_d) % 1.0   # (N_D, 3)
 
-    vacancies     = [j for j in range(len(pos_p)) if j not in matched_p]
-    interstitials = [i for i in range(len(pos_d)) if d2p[i] < 0]
+        # Auto-detect a rigid fractional shift between the two supercells.
+        # Use the first defect atom to find the nearest pristine (without any
+        # threshold), then derive shift = frac_d[0] - frac_p[nearest].
+        df0   = frac_d[0] - frac_p            # (N_P, 3)
+        df0  -= np.round(df0)
+        j0    = int(np.argmin(np.linalg.norm(df0 @ lat_d, axis=1)))
+        shift = frac_d[0] - frac_p[j0]
+        shift -= np.round(shift)              # fractional, in (−0.5, 0.5]
+
+        frac_d_aligned = (frac_d - shift) % 1.0
+
+        for i in range(N_D):
+            df = frac_d_aligned[i] - frac_p  # (N_P, 3)
+            df -= np.round(df)
+            dists_i = np.linalg.norm(df @ lat_d, axis=1)
+            j = int(np.argmin(dists_i))
+            if dists_i[j] < threshold:
+                d2p[i] = j
+                matched_p.add(j)
+    else:
+        dists = np.linalg.norm(
+            pos_d[:, None, :] - pos_p[None, :, :], axis=2)   # (N_D, N_P)
+        for i in range(N_D):
+            j = int(np.argmin(dists[i]))
+            if dists[i, j] < threshold:
+                d2p[i] = j
+                matched_p.add(j)
+
+    vacancies     = [j for j in range(N_P) if j not in matched_p]
+    interstitials = [i for i in range(N_D) if d2p[i] < 0]
     return d2p, vacancies, interstitials
 
 
@@ -206,8 +247,8 @@ def compute_projection(data_d: dict, data_p: dict,
             e_p[:, i, :] = modes_p[:, j, :]
     e_p = e_p.reshape(N_k_p, -1)
 
-    c = e_d @ e_p.T   # (N_k_d, N_k_p)
-    return c ** 2
+    c = e_d @ e_p.T   # (N_k_d, N_k_p), signed
+    return c, c ** 2
 
 
 # ── Widget ────────────────────────────────────────────────────────────────────
@@ -224,6 +265,7 @@ class PhononProjectionWidget(QWidget):
         self._data_p : dict | None = None
         self._data_d : dict | None = None
         self._d2p    : np.ndarray | None = None
+        self._c      : np.ndarray | None = None   # (N_k_d, N_k_p), signed
         self._c_sq   : np.ndarray | None = None   # (N_k_d, N_k_p)
         self._cursor : object | None = None
 
@@ -272,6 +314,16 @@ class PhononProjectionWidget(QWidget):
         self._mode_spin.valueChanged.connect(self._on_mode_changed)
         cl.addWidget(self._mode_spin)
 
+        cl.addWidget(QLabel("σ (meV):"))
+        self._sigma_spin = QDoubleSpinBox()
+        self._sigma_spin.setRange(0.1, 50.0)
+        self._sigma_spin.setSingleStep(0.5)
+        self._sigma_spin.setValue(2.0)
+        self._sigma_spin.setFixedWidth(68)
+        self._sigma_spin.setEnabled(False)
+        self._sigma_spin.valueChanged.connect(self._on_sigma_changed)
+        cl.addWidget(self._sigma_spin)
+
         self._project_btn = QPushButton("▶  Project")
         self._project_btn.setEnabled(False)
         self._project_btn.clicked.connect(self._run_projection)
@@ -295,12 +347,58 @@ class PhononProjectionWidget(QWidget):
         self._hint.setStyleSheet("color: gray; font-style: italic; padding: 32px;")
         root.addWidget(self._hint, 1)
 
-        # ── Plot ──────────────────────────────────────────────────────────
-        self._canvas = PlotCanvas(nrows=1, ncols=1, figsize=(9, 5))
-        self._canvas.setVisible(False)
-        root.addWidget(self._canvas, 1)
+        # ── Scrollable area: plot then table ──────────────────────────────
+        self._scroll_area = QScrollArea()
+        self._scroll_area.setWidgetResizable(True)
+        self._scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll_area.setVisible(False)
 
-        # ── Hover card ────────────────────────────────────────────────────
+        _inner = QWidget()
+        _inner_layout = QVBoxLayout(_inner)
+        _inner_layout.setContentsMargins(0, 0, 4, 8)
+        _inner_layout.setSpacing(8)
+
+        # Mirrored stick spectrum: pristine up, defect down
+        self._spec_canvas = PlotCanvas(nrows=1, ncols=1, figsize=(14, 3))
+        self._spec_canvas.setMinimumHeight(230)
+        self._spec_canvas.setMaximumHeight(300)
+        self._spec_canvas.canvas.wheelEvent = lambda e: self._scroll_area.wheelEvent(e)
+        _inner_layout.addWidget(self._spec_canvas)
+
+        # Canvas — tall enough to fill the viewport so table starts below the fold
+        self._canvas = PlotCanvas(nrows=1, ncols=1, figsize=(14, 8))
+        self._canvas.setMinimumHeight(520)
+        self._canvas.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # matplotlib consumes wheel events; forward them to the scroll area
+        self._canvas.wheelEvent = lambda e: self._scroll_area.wheelEvent(e)
+        _inner_layout.addWidget(self._canvas)
+
+        # Table label + table (visible only after scrolling down)
+        self._table_lbl = QLabel("Contributing pristine modes  (|c|² > 1×10⁻⁸, sorted by |c|²):")
+        self._table_lbl.setObjectName("hint_label")
+        self._table_lbl.setStyleSheet("color: gray; font-size: 11px; padding-top: 4px;")
+        self._table_lbl.setVisible(False)
+        _inner_layout.addWidget(self._table_lbl)
+
+        self._table = QTableWidget(0, 5)
+        self._table.setHorizontalHeaderLabels(
+            ["Pristine mode k′", "Energy (meV)", "Freq (THz)", "c", "|c|²"])
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        # No internal scrollbar — outer scroll area handles it
+        self._table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._table.setVisible(False)
+        _inner_layout.addWidget(self._table)
+        _inner_layout.addStretch(1)
+
+        self._scroll_area.setWidget(_inner)
+        root.addWidget(self._scroll_area, 1)
+
+        # ── Hover card — pinned outside the scroll area ───────────────────
         self._hover_card = QFrame()
         self._hover_card.setObjectName("info_card")
         self._hover_card.setVisible(False)
@@ -455,7 +553,9 @@ class PhononProjectionWidget(QWidget):
 
         # Atom mapping
         if dp['positions'] is not None and dd['positions'] is not None:
-            d2p, vac, inter = map_atoms(dp['positions'], dd['positions'])
+            lat_p = dp.get('lattice')
+            lat_d = dd.get('lattice')
+            d2p, vac, inter = map_atoms(dp['positions'], dd['positions'], lat_p, lat_d)
             N_D = len(dd['positions'])
             matched = int(np.sum(d2p >= 0))
             self._status_lbl.setText(
@@ -475,45 +575,68 @@ class PhononProjectionWidget(QWidget):
             )
 
         self._d2p  = d2p
-        self._c_sq = compute_projection(dd, dp, d2p)   # (N_k_d, N_k_p)
+        self._c, self._c_sq = compute_projection(dd, dp, d2p)   # (N_k_d, N_k_p)
 
         self._mode_spin.setEnabled(True)
+        self._sigma_spin.setEnabled(True)
         self._hint.setVisible(False)
-        self._canvas.setVisible(True)
+        self._scroll_area.setVisible(True)
+        self._plot_spectrum()
         self._replot()
 
     def _on_mode_changed(self):
         if self._c_sq is not None:
             self._replot()
 
-    # ── Plot ──────────────────────────────────────────────────────────────
+    def _on_sigma_changed(self):
+        if self._c_sq is not None:
+            self._replot()
 
-    def _replot(self):
-        if self._c_sq is None or self._data_p is None or self._data_d is None:
-            return
+    # ── Helpers ───────────────────────────────────────────────────────────
 
-        k = self._mode_spin.value() - 1   # 0-indexed
-        row = self._c_sq[k]               # (N_k_p,)
+    def _plot_spectrum(self):
+        """Mirrored stick spectrum — pristine modes up, defect modes down."""
+        Ep, Ed = self._energies()
 
+        fig = self._spec_canvas.fig
+        fig.set_layout_engine("none")          # keep room for the side labels
+        ax = self._spec_canvas.ax
+        ax.cla()
+
+        ax.vlines(Ep, 0,  1, color=DARK["blue"],   lw=0.8, alpha=0.85)
+        ax.vlines(Ed, 0, -1, color=DARK["purple"], lw=0.8, alpha=0.85)
+        ax.axhline(0, color=DARK["text"], lw=2.0, zorder=5)
+
+        ax.set_ylim(-1, 1)
+        ax.set_yticks([])
+        ax.set_xlim(0, max(float(Ep.max()), float(Ed.max())) * 1.03)
+
+        ax.text(-0.055, 0.75, "Pristine", transform=ax.transAxes,
+                fontsize=13, fontweight="bold", color=DARK["blue"],
+                ha="center", va="center", clip_on=False)
+        ax.text(-0.055, 0.25, "Defect", transform=ax.transAxes,
+                fontsize=13, fontweight="bold", color=DARK["purple"],
+                ha="center", va="center", clip_on=False)
+
+        ax.set_xlabel("Phonon Energy  (meV)", color=DARK["text"],
+                      fontsize=12, fontweight="bold")
+        ax.set_title(
+            f"Mode spectra   —   pristine: {len(Ep)} modes,  defect: {len(Ed)} modes",
+            color=DARK["text"], fontsize=9,
+        )
+        ax.grid(alpha=0.3, axis="x")
+
+        fig.subplots_adjust(left=0.11, right=0.99, top=0.86, bottom=0.26)
+        self._spec_canvas.draw()
+
+    def _energies(self):
         dp = self._data_p
         dd = self._data_d
+        Ep = dp['freqs'] * 4.13566 if dp['source'] in ('yaml', 'outcar') else dp['freqs']
+        Ed = dd['freqs'] * 4.13566 if dd['source'] in ('yaml', 'outcar') else dd['freqs']
+        return Ep, Ed
 
-        # Pristine energies in meV
-        if dp['source'] in ('yaml', 'outcar'):
-            Ep = dp['freqs'] * 4.13566   # THz → meV
-        else:
-            Ep = dp['freqs']             # already meV
-
-        # Defect energy for title
-        if dd['source'] in ('yaml', 'outcar'):
-            Ek_d = dd['freqs'][k] * 4.13566
-            Ek_d_str = f"{Ek_d:.2f} meV"
-        else:
-            Ek_d_str = f"mode {k + 1}"
-
-        sum_csq = float(row.sum())
-
-        # Remove cursor before clearing
+    def _clear_cursor(self):
         if self._cursor is not None:
             try:
                 self._cursor.remove()
@@ -521,44 +644,131 @@ class PhononProjectionWidget(QWidget):
                 pass
             self._cursor = None
 
+    # ── Projection table ──────────────────────────────────────────────────
+
+    def _update_table(self):
+        k    = self._mode_spin.value() - 1
+        row  = self._c_sq[k]
+        c_signed = self._c[k]
+        Ep, _ = self._energies()
+        freqs_thz_p = self._data_p['freqs']
+
+        # All modes above numerical noise floor, sorted descending by |c|²
+        THRESH = 1e-8
+        idx    = np.where(row > THRESH)[0]
+        srt    = idx[np.argsort(row[idx])[::-1]]
+
+        self._table.setRowCount(len(srt))
+        for r, ki in enumerate(srt):
+            c2 = float(row[ki])
+            c  = float(c_signed[ki])
+            vals = [f"{ki + 1}", f"{Ep[ki]:.4f}", f"{freqs_thz_p[ki]:.4f}",
+                    f"{c:.6f}", f"{c2:.6f}"]
+            for col, val in enumerate(vals):
+                item = QTableWidgetItem(val)
+                item.setTextAlignment(
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self._table.setItem(r, col, item)
+
+        # Size the table to show all rows so the outer scroll area is the only scroller
+        row_h    = self._table.verticalHeader().defaultSectionSize()
+        header_h = self._table.horizontalHeader().height()
+        total_h  = header_h + len(srt) * row_h + 4
+        self._table.setMinimumHeight(total_h)
+        self._table.setMaximumHeight(total_h)
+
+        self._table.setVisible(True)
+        self._table_lbl.setVisible(True)
+
+    # ── Plot ──────────────────────────────────────────────────────────────
+
+    def _replot(self):
+        if self._c_sq is None or self._data_p is None or self._data_d is None:
+            return
+
+        k      = self._mode_spin.value() - 1
+        row    = self._c_sq[k]
+        sigma  = self._sigma_spin.value()
+        Ep, Ed = self._energies()
+        sum_csq = float(row.sum())
+
+        self._clear_cursor()
+        self._hover_card.setVisible(False)
+
         ax = self._canvas.ax
         ax.cla()
 
-        freqs_thz = dp['freqs'] if dp['source'] in ('yaml', 'outcar') else Ep / 4.13566
-        freqs_cm  = Ep * 8.0655
+        # ── Gaussian spectral function ────────────────────────────────────
+        # G(E) = Σ_{k'} |c|² exp(-(E-E_k')²/(2σ²))
+        # Peak at each mode = |c|², so y-axis is shared with scatter.
+        E_lo = max(0.0, Ep.min() - 6 * sigma)
+        E_hi = Ep.max() + 6 * sigma
+        E_fine = np.linspace(E_lo, E_hi, 4000)
+        gauss = np.zeros_like(E_fine)
+        # Only modes above noise floor contribute meaningfully
+        max_val = float(row.max()) if row.max() > 0 else 1.0
+        active  = row > max_val * 1e-5
+        for e_k, c2 in zip(Ep[active], row[active]):
+            gauss += c2 * np.exp(-0.5 * ((E_fine - e_k) / sigma) ** 2)
 
-        # Lollipop: stem colour scaled by |c|²
-        max_val = row.max() if row.max() > 0 else 1.0
-        colors = [
-            DARK["blue"] if v >= 0.3 * max_val else
-            (DARK["purple"] if v >= 0.05 * max_val else DARK["spine"])
-            for v in row
-        ]
+        ax.fill_between(E_fine, gauss,
+                        color=DARK["blue"], alpha=0.18, zorder=1)
+        ax.plot(E_fine, gauss,
+                color=DARK["blue"], lw=1.1, alpha=0.7, zorder=2)
 
-        ax.vlines(Ep, 0, row, colors=colors, linewidth=0.9, alpha=0.80, zorder=2)
-        ax.axhline(0, color=DARK["spine"], lw=0.7, zorder=1)
+        # ── Scatter: only points above 0.5 % of max ──────────────────────
+        thresh = max_val * 0.005
+        mask   = row > thresh
+        Ep_m   = Ep[mask]
+        row_m  = row[mask]
+        orig_i = np.where(mask)[0]           # indices back into full Ep / row
 
+        # Marker area ∝ |c|² (linear), max size = 250 pt²
+        sizes  = row_m / max_val * 250
+
+        # Three-tier colour by relative magnitude
+        colors_m = np.where(
+            row_m >= 0.3 * max_val, 0,
+            np.where(row_m >= 0.05 * max_val, 1, 2)
+        )
+        palette = [DARK["blue"], DARK["purple"], DARK["spine"]]
+        c_rgba  = [palette[ci] for ci in colors_m]
+
+        sc = ax.scatter(Ep_m, row_m,
+                        s=sizes, c=c_rgba, alpha=0.85,
+                        linewidths=0.4, edgecolors='white',
+                        zorder=3)
+
+        ax.axhline(0, color=DARK["spine"], lw=0.5, zorder=0)
+
+        freqs_thz_p = self._data_p['freqs']   # THz, aligned with Ep
+
+        Ek_str = f"{Ed[k]:.2f} meV" if self._data_d['source'] in ('yaml', 'outcar') \
+                 else f"mode {k + 1}"
         ax.set_xlabel(r"Pristine phonon energy  $E_{k'}^P$  (meV)", color=DARK["text"])
         ax.set_ylabel(r"$|c_{k,k'}|^2$", color=DARK["text"])
         ax.set_title(
-            f"Defect mode k={k + 1}  ({Ek_d_str})  →  pristine basis"
-            f"       Σ|c|² = {sum_csq:.4f}",
+            f"Defect mode k={k + 1}  ({Ek_str})  →  pristine basis"
+            f"       Σ|c|² = {sum_csq:.4f}   σ = {sigma:.1f} meV",
             color=DARK["text"], fontsize=9,
         )
-        ax.set_ylim(bottom=0)
+        ax.set_ylim(bottom=-0.008 * max_val)
+        ax.set_xlim(E_lo, E_hi)
 
         self._canvas.fig.tight_layout()
         self._canvas.draw()
 
-        # Invisible scatter for hover
-        sc = ax.scatter(Ep, row, s=14, alpha=0, zorder=3)
+        # ── Projection table ───────────────────────────────────────────────
+        self._update_table()
+
+        # ── Hover ─────────────────────────────────────────────────────────
         self._cursor = mplcursors.cursor(sc, hover=True)
         hc   = self._hc
         card = self._hover_card
 
         @self._cursor.connect("add")
         def on_add(sel):
-            i = sel.index
+            i    = orig_i[sel.index]
             sel.annotation.set_text(
                 f"Pristine mode {i + 1}\n"
                 f"Energy: {Ep[i]:.3f} meV\n"
@@ -570,7 +780,7 @@ class PhononProjectionWidget(QWidget):
             sel.annotation.set_fontsize(10)
             hc["Pristine mode k′"].setText(f"#{i + 1}")
             hc["E_k′ (meV)"].setText(f"{Ep[i]:.4f}")
-            hc["Freq (THz)"].setText(f"{freqs_thz[i]:.4f}")
+            hc["Freq (THz)"].setText(f"{freqs_thz_p[i]:.4f}")
             hc["|c|²"].setText(f"{row[i]:.6f}")
             hc["Σ|c|² (all k′)"].setText(f"{sum_csq:.4f}")
             card.setVisible(True)

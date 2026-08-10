@@ -534,12 +534,17 @@ class EmissionTab(QWidget):
         self._show_mc = QCheckBox("Monte Carlo")
         self._show_mc.setChecked(True)
         self._show_mc.toggled.connect(self._replot)
+        self._show_sq = QCheckBox("Squeezed")
+        self._show_sq.setChecked(True)
+        self._show_sq.toggled.connect(self._replot)
         self._show_exp_em = QCheckBox("Experiment")
         self._show_exp_em.setChecked(True)
         self._show_exp_em.toggled.connect(self._replot)
         ctrl.addWidget(self._show_analytical)
         ctrl.addSpacing(16)
         ctrl.addWidget(self._show_mc)
+        ctrl.addSpacing(16)
+        ctrl.addWidget(self._show_sq)
         ctrl.addSpacing(16)
         ctrl.addWidget(self._show_exp_em)
         ctrl.addStretch()
@@ -618,9 +623,12 @@ class EmissionTab(QWidget):
     def populate(self, results: dict):
         self._results = results
         has_mc  = "monte_carlo_emission" in results
+        has_sq  = bool(results.get("squeezed"))
         has_exp = "exp_emission" in results
         self._show_mc.setEnabled(has_mc)
         self._show_mc.setChecked(has_mc)
+        self._show_sq.setEnabled(has_sq)
+        self._show_sq.setChecked(has_sq)
         self._show_exp_em.setEnabled(has_exp)
         self._show_exp_em.setChecked(has_exp)
         self._exp_ctrl_row_em.setVisible(has_exp)
@@ -695,6 +703,25 @@ class EmissionTab(QWidget):
         else:
             self._stats_frame.setVisible(False)
 
+        sq = results.get("squeezed")
+        if sq and self._show_sq.isChecked():
+            E_sq = convert_energy(sq["E_photon_emission"], unit)
+            I_sq = np.real(sq["I_emission"])
+            line_sq, = ax.plot(E_sq, I_sq, color=DARK["purple"], linewidth=1.8,
+                               ls=":", label="Squeezed oscillator", zorder=3)
+
+            c_sq = mplcursors.cursor(line_sq, hover=True)
+            @c_sq.connect("add")
+            def on_add_sq(sel, _u=u_lbl):
+                x, y = sel.target
+                sel.annotation.set_text(
+                    f"Photon Energy: {x:.3f} {_u}\nSqueezed L(E): {y:.4e}"
+                )
+                sel.annotation.get_bbox_patch().set(fc=DARK["axes_bg"], ec=DARK["spine"], alpha=0.92)
+                sel.annotation.set_color(DARK["text"])
+                sel.annotation.set_fontsize(11)
+            self._cursors.append(c_sq)
+
         exp = results.get("exp_emission")
         if exp and self._show_exp_em.isChecked():
             E_exp, I_exp = _apply_exp(
@@ -762,10 +789,15 @@ class AbsorptionTab(QWidget):
         ctrl.addSpacing(20)
         self._overlay = QCheckBox("Overlay emission")
         self._overlay.toggled.connect(self._replot)
+        self._show_sq_abs = QCheckBox("Squeezed")
+        self._show_sq_abs.setChecked(True)
+        self._show_sq_abs.toggled.connect(self._replot)
         self._show_exp_abs = QCheckBox("Experiment")
         self._show_exp_abs.setChecked(True)
         self._show_exp_abs.toggled.connect(self._replot)
         ctrl.addWidget(self._overlay)
+        ctrl.addSpacing(16)
+        ctrl.addWidget(self._show_sq_abs)
         ctrl.addSpacing(16)
         ctrl.addWidget(self._show_exp_abs)
         ctrl.addStretch()
@@ -827,8 +859,11 @@ class AbsorptionTab(QWidget):
     def populate(self, results: dict):
         self._results = results
         has_exp = "exp_absorption" in results
+        has_sq  = bool(results.get("squeezed"))
         self._show_exp_abs.setEnabled(has_exp)
         self._show_exp_abs.setChecked(has_exp)
+        self._show_sq_abs.setEnabled(has_sq)
+        self._show_sq_abs.setChecked(has_sq)
         self._exp_ctrl_row_abs.setVisible(has_exp)
         self._replot()
 
@@ -880,6 +915,25 @@ class AbsorptionTab(QWidget):
                     sel.annotation.set_color(DARK["text"])
                     sel.annotation.set_fontsize(11)
                 self._cursors.append(c_e)
+
+        sq = results.get("squeezed")
+        if sq and self._show_sq_abs.isChecked():
+            E_sq = convert_energy(sq["E_photon_absorption"], unit)
+            I_sq = np.real(sq["I_absorption"])
+            line_sq, = ax.plot(E_sq, I_sq, color=DARK["purple"], linewidth=1.8,
+                               ls=":", label="Squeezed oscillator", zorder=3)
+
+            c_sq = mplcursors.cursor(line_sq, hover=True)
+            @c_sq.connect("add")
+            def on_add_sq(sel, _u=u_lbl):
+                x, y = sel.target
+                sel.annotation.set_text(
+                    f"Photon Energy: {x:.3f} {_u}\nSqueezed L(E): {y:.4e}"
+                )
+                sel.annotation.get_bbox_patch().set(fc=DARK["axes_bg"], ec=DARK["spine"], alpha=0.92)
+                sel.annotation.set_color(DARK["text"])
+                sel.annotation.set_fontsize(11)
+            self._cursors.append(c_sq)
 
         exp = results.get("exp_absorption")
         if exp and self._show_exp_abs.isChecked():
@@ -1417,7 +1471,7 @@ class AdvancedTab(QWidget):
         self._gt_canvas = PlotCanvas(figsize=(9, 4))
         self._tabs.addTab(self._gt_canvas, "Generating Function  G(t)")
 
-        self._sq_canvas = PlotCanvas(nrows=2, ncols=2, figsize=(10, 7))
+        self._sq_canvas = PlotCanvas(nrows=2, ncols=1, figsize=(8, 9))
         self._tabs.addTab(self._sq_canvas, "Squeezed Oscillator")
 
         # Overlay tab — 2x2: top row always shown, bottom row for squeezed
@@ -1508,8 +1562,17 @@ class AdvancedTab(QWidget):
         _oabs.addStretch()
         ov_lay.addWidget(self._ov_exp_abs_row)
 
-        self._ov_canvas = PlotCanvas(nrows=2, ncols=2, figsize=(10, 7))
-        ov_lay.addWidget(self._ov_canvas, 1)
+        # Tall single-column figure — wrapped in a scroll area since 4 panels
+        # with titles/labels don't fit legibly in one screen.
+        self._ov_canvas = PlotCanvas(nrows=4, ncols=1, figsize=(8, 22))
+        self._ov_canvas.setMinimumHeight(2200)
+        # matplotlib consumes wheel events; forward them to the scroll area
+        self._ov_scroll = QScrollArea()
+        self._ov_scroll.setWidgetResizable(True)
+        self._ov_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._ov_scroll.setWidget(self._ov_canvas)
+        self._ov_canvas.canvas.wheelEvent = lambda e: self._ov_scroll.wheelEvent(e)
+        ov_lay.addWidget(self._ov_scroll, 1)
         self._tabs.addTab(self._ov_widget, "Overlay")
 
     def _remove_cursors(self):
@@ -1571,20 +1634,20 @@ class AdvancedTab(QWidget):
     def _plot_squeezed(self, results):
         sq    = results["squeezed"]
         Ek_gs = results["Ek_gs"]
-        Ek_es = results.get("Ek_es", Ek_gs)
-        zpl   = results.get("_zpl_meV")
         axes  = self._sq_canvas.axes
         for ax in axes:
             ax.cla()
 
-        ax1, ax2, ax3, ax4 = axes
+        ax1, ax2 = axes
 
         rk = sq.get("rk", np.zeros(len(Ek_gs)))
-        ax1.bar(np.arange(1, len(rk) + 1), rk, color=DARK["purple"], alpha=0.8)
+        sinh2_rk = np.sinh(rk) ** 2
+        ax1.bar(np.arange(1, len(rk) + 1), sinh2_rk, color=DARK["purple"], alpha=0.8)
         ax1.set_xlabel("Mode index", color=DARK["text"])
-        ax1.set_ylabel("Squeezing parameter  rₖ", color=DARK["text"])
+        ax1.set_ylabel(r"$\sinh^2 r_k$", color=DARK["text"])
         ax1.set_title(
-            r"Squeezing parameters  "
+            r"Squeezed mean phonon number contribution  "
+            r"$\sinh^2 r_k$,  where  "
             r"$r_k = \frac{1}{2}\ln\!\left(\frac{\omega_{ES,k}}{\omega_{GS,k}}\right)$",
             color=DARK["text"]
         )
@@ -1600,26 +1663,6 @@ class AdvancedTab(QWidget):
         ax2.legend(facecolor=DARK["axes_bg"], edgecolor=DARK["spine"],
                    labelcolor=DARK["text"], fontsize=9)
 
-        E_em = convert_energy(sq["E_photon_emission"], "meV")
-        ax3.plot(E_em, np.real(sq["I_emission"]), color=DARK["blue"], lw=2)
-        _draw_zpl(ax3, zpl, "meV")
-        ax3.set_xlabel("Photon Energy  (meV)", color=DARK["text"])
-        ax3.set_ylabel("L(E)  [arb. units]", color=DARK["text"])
-        ax3.set_title("Squeezed Emission Spectrum", color=DARK["text"])
-        if ax3.get_lines():
-            ax3.legend(facecolor=DARK["axes_bg"], edgecolor=DARK["spine"],
-                       labelcolor=DARK["text"], fontsize=9)
-
-        E_abs = convert_energy(sq["E_photon_absorption"], "meV")
-        ax4.plot(E_abs, np.real(sq["I_absorption"]), color=DARK["green"], lw=2)
-        _draw_zpl(ax4, zpl, "meV")
-        ax4.set_xlabel("Photon Energy  (meV)", color=DARK["text"])
-        ax4.set_ylabel("L(E)  [arb. units]", color=DARK["text"])
-        ax4.set_title("Squeezed Absorption Spectrum", color=DARK["text"])
-        if ax4.get_lines():
-            ax4.legend(facecolor=DARK["axes_bg"], edgecolor=DARK["spine"],
-                       labelcolor=DARK["text"], fontsize=9)
-
         self._sq_canvas.draw()
 
     def _replot_overlay(self):
@@ -1633,6 +1676,9 @@ class AdvancedTab(QWidget):
         zpl      = results.get("_zpl_meV")
         exp_em   = results.get("exp_emission")
         exp_abs  = results.get("exp_absorption")
+
+        # Only stretch the scrollable canvas as tall as the panels actually shown
+        self._ov_canvas.setMinimumHeight(2200 if has_sq else 1150)
 
         axes = self._ov_canvas.axes
         for ax in axes:
