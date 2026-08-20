@@ -195,7 +195,184 @@ class ReadFiles:
     normal_modes = normal_modes[sort]
 
     return atomic_masses_full, freqs, normal_modes
-  
+
+  def ReadPhononsFlagged(self, path):
+
+    """
+    Reads OUTCAR or band.yaml WITHOUT discarding imaginary/unstable modes.
+
+    ReadPhononsVasp only keeps the numeric THz value and drops VASP's 'f/i'
+    (imaginary) tag; ReadPhononsPhonopy clips negative frequencies to 0. Both
+    make it impossible to tell which modes were unstable after the fact. This
+    unifies both formats into one signed convention: NEGATIVE energy/frequency
+    means imaginary/unstable, regardless of which file it came from (VASP
+    reports a positive magnitude with a separate 'f/i' text tag; Phonopy
+    reports a literal negative number -- both become a negative value here).
+
+    Input:  path - OUTCAR or band.yaml.
+
+    Output: masses (N,) amu, freqs (N_modes,) THz [signed], modes
+            (N_modes, N_atoms, 3), energies (N_modes,) meV [signed]
+    """
+    import os
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".yaml":
+        masses, freqs, modes = self._read_phonopy_signed(path)
+    else:
+        masses, freqs, modes = self._read_outcar_signed(path)
+    energies = 4.13566 * freqs
+    return masses, freqs, modes, energies
+
+  def _read_phonopy_signed(self, path):
+    with open(path, 'r') as file:
+        lines = [ts.strip() for ts in file]
+
+    atomic_masses = []
+    for line in lines:
+        if "mass:" in line:
+            atomic_masses.append(line.split()[1])
+    atomic_masses = np.array(atomic_masses, dtype=float)
+    total_atoms = len(atomic_masses)
+
+    freqs, normal_modes = [], []
+    for line_number, line in enumerate(lines):
+        if "frequency:" in line:
+            freqs.append(float(line.split()[1]))
+            ev_internal = []
+            for i in range(line_number + 3, line_number + 4 * total_atoms + 2, 4):
+                xyz = [lines[i + j].split()[2] for j in range(3)]
+                ev_internal.append(xyz)
+            normal_modes.append(ev_internal)
+
+    freqs = np.array(freqs, dtype=float)   # sign preserved -- NOT clipped to 0
+    normal_modes = np.array(
+        [[[float(x.strip(',')) for x in sub] for sub in outer] for outer in normal_modes]
+    )
+    n_modes = 3 * total_atoms
+    return atomic_masses, freqs[:n_modes], normal_modes[:n_modes]
+
+  def _read_outcar_signed(self, path):
+    with open(path, 'r') as file:
+        lines = [line.strip() for line in file]
+
+    mass_idx = lines.index("Mass of Ions in am")
+    atomic_masses = np.array(lines[mass_idx + 1].split()[2:], dtype=float)
+
+    ions_line = [l for l in lines if "ions per type" in l][0]
+    number_of_atoms = np.array(ions_line.split('=')[1].split(), dtype=int)
+    total_atoms = int(np.sum(number_of_atoms))
+    atomic_masses_full = np.repeat(atomic_masses, number_of_atoms)
+
+    index_init = lines.index("Eigenvectors and eigenvalues of the dynamical matrix")
+    index_final = next(
+        i for i, line in enumerate(lines)
+        if i > index_init and (
+            "Finite differences POTIM=" in line
+            or "ELASTIC MODULI CONTR FROM IONIC RELAXATION" in line
+        )
+    )
+
+    freqs, normal_modes = [], []
+    for i in range(index_init, index_final + 1):
+        if "THz" in lines[i]:
+            toks = lines[i].split()
+            freq = float(toks[toks.index("THz") - 1])
+            if "f/i" in lines[i]:
+                freq = -freq   # VASP prints a positive magnitude; unify sign convention
+            freqs.append(freq)
+            mode_block = [lines[j].split() for j in range(i + 2, i + 2 + total_atoms)]
+            normal_modes.append(mode_block)
+
+    freqs = np.array(freqs, dtype=float)
+    normal_modes = np.array(normal_modes, dtype=float)[..., 3:]
+
+    # Sort by |freq| (magnitude) so imaginary modes land alongside the other
+    # near-zero modes rather than all being sorted to one end by their sign.
+    sort = np.argsort(np.abs(freqs))
+    return atomic_masses_full, freqs[sort], normal_modes[sort]
+
+  def parse_mode_range(self, text):
+    """'1-5, 9-11' (1-based, as shown to the user) -> set of 0-based indices."""
+    text = (text or "").strip().strip("()")
+    if not text:
+        return set()
+    out = set()
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.match(r'^(\d+)\s*-\s*(\d+)$', part)
+        if m:
+            lo, hi = int(m.group(1)), int(m.group(2))
+            out.update(range(lo - 1, hi))
+        else:
+            out.add(int(part) - 1)
+    return out
+
+  def parse_energy_ranges(self, text):
+    """'0-24, 100-110' (meV) -> list of (lo, hi) tuples. Negative bounds allowed.
+
+    Uses an anchored two-group match rather than scanning for all numbers:
+    a bare findall on '-?\\d+' misreads the separating '-' in e.g. '0-24' as
+    a sign on '24', giving (-24, ...) instead of splitting into (0, 24).
+    """
+    text = (text or "").strip().strip("()")
+    if not text:
+        return []
+    ranges = []
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.match(r'^(-?\d+\.?\d*)\s*-\s*(-?\d+\.?\d*)$', part)
+        if not m:
+            raise ValueError(f"Cannot parse energy range: '{part}'")
+        lo, hi = float(m.group(1)), float(m.group(2))
+        ranges.append((min(lo, hi), max(lo, hi)))
+    return ranges
+
+  def build_exclusion_mask(self, energies_meV, mode_range_text, energy_range_text):
+    """Union of mode-number and energy-range exclusions. True = excluded."""
+    N = len(energies_meV)
+    mask = np.zeros(N, dtype=bool)
+    for idx in self.parse_mode_range(mode_range_text):
+        if 0 <= idx < N:
+            mask[idx] = True
+    for lo, hi in self.parse_energy_ranges(energy_range_text):
+        mask |= (energies_meV >= lo) & (energies_meV <= hi)
+    return mask
+
+  def InverseHessian(self, masses, energies_meV_kept, modes_kept):
+    """
+    Constructs H^-1 (units Angstrom^2/eV) from the KEPT modes only, such that
+    H_inv @ F.ravel() with F given directly in eV/Angstrom yields a
+    displacement in Angstrom -- no separate unit conversion needed by the
+    caller.
+
+        H^-1 = 1000 * M^-1/2  eta  Omega_signed^-2  eta^T  M^-1/2
+
+    Uses SIGNED Omega^2 = sign(E) * (E/hbar)^2, not |E|^2/hbar^2: if a mode
+    the user chose to KEEP is flagged imaginary (negative energy), this
+    preserves its true negative curvature in the saved matrix rather than
+    silently treating it as an ordinary positive-curvature mode. No small-E
+    threshold is applied -- a small-but-nonzero energy just gives a large
+    (finite) contribution, which is the user's call to exclude or not. Only
+    an EXACT zero (1/0, genuinely undefined rather than merely large) raises.
+    """
+    energies_meV_kept = np.asarray(energies_meV_kept, dtype=float)
+    signed_w2 = np.sign(energies_meV_kept) * (energies_meV_kept / self.hbar) ** 2
+    if np.any(signed_w2 == 0):
+        raise ValueError(
+            "One or more kept modes have exactly zero energy -- their inverse "
+            "stiffness is undefined (1/0), not just large. Exclude them before "
+            "constructing H^-1."
+        )
+    m3 = np.repeat(masses, 3)
+    inv_sqrt_m = 1.0 / np.sqrt(m3)
+    N_k = len(energies_meV_kept)
+    eta = modes_kept.reshape(N_k, -1) * inv_sqrt_m[None, :]
+    H_inv = 1000.0 * (eta.T / signed_w2[None, :]) @ eta
+    return H_inv
 
   def ReadForces(self, path):
 
@@ -214,6 +391,198 @@ class ReadFiles:
                 raise ValueError(f"Force data not found in OUTCAR.")
             F = np.loadtxt(lines[start:end])
     return F[:,3:]
+
+  def ReadForceFile(self, path):
+    """
+    Reads forces from any of: OUTCAR (last TOTAL-FORCE block -- see
+    ReadForces, which already scans to the LAST occurrence, not the first),
+    .npy, .npz, or whitespace-delimited .dat/.txt.
+    """
+    import os
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".npy":
+        return np.load(path)
+    if ext == ".npz":
+        d = np.load(path)
+        return d[d.files[0]]
+    if ext in (".txt", ".dat"):
+        return np.loadtxt(path)
+    return self.ReadForces(path)
+
+  def ReadStructureFile(self, path):
+    """
+    Reads a structure from any supported format, returning both the
+    Cartesian positions AND enough metadata to write the SAME format back
+    out later (WriteStructureFile).
+
+    Output: positions (N,3) Cartesian Angstrom, format_info dict:
+        POSCAR/CONTCAR -> {"kind":"poscar", "atoms":{el:count,...},
+                            "lattice":(3,3), "comment":str}
+        OUTCAR          -> same "poscar" kind (geometry + lattice extracted
+                            from the OUTCAR's own LAST ionic-step block, so
+                            it can be saved straight back out as a POSCAR)
+        .xyz            -> {"kind":"xyz", "species":[el,...], "lattice":(3,3)|None}
+        .npy/.npz/.dat/.txt -> {"kind":"array", "ext":str}
+    """
+    import os
+    ext = os.path.splitext(path)[1].lower()
+
+    if ext in (".npy", ".npz", ".txt", ".dat"):
+        if ext == ".npy":
+            positions = np.load(path)
+        elif ext == ".npz":
+            d = np.load(path)
+            positions = d[d.files[0]]
+        else:
+            positions = np.loadtxt(path)
+        return positions, {"kind": "array", "ext": ext}
+
+    if ext == ".xyz":
+        positions, species, lattice = self.ReadStructureXYZ(path)
+        return positions, {"kind": "xyz", "species": species, "lattice": lattice}
+
+    # OUTCAR detection: a cheap check on the first line (every OUTCAR opens
+    # with a "vasp.X.Y.Z ..." banner), before falling through to the
+    # POSCAR/CONTCAR parser -- which would otherwise misparse an OUTCAR's
+    # header as POSCAR fields.
+    with open(path) as f:
+        first_line = f.readline()
+    if first_line.strip().lower().startswith("vasp."):
+        positions, atoms, lattice = self._read_outcar_structure(path)
+        return positions, {
+            "kind": "poscar", "atoms": atoms, "lattice": lattice,
+            "comment": "Generated by plumipy from OUTCAR (last ionic step)",
+        }
+
+    positions, atoms, lattice = self.ReadStructure(path)
+    with open(path) as f:
+        comment = f.readline().rstrip("\n")
+    return positions, {"kind": "poscar", "atoms": atoms, "lattice": lattice,
+                        "comment": comment}
+
+  def _read_outcar_structure(self, path):
+    """
+    Reads geometry from an OUTCAR's LAST POSITION+TOTAL-FORCE block --
+    first 3 columns are position, next 3 are force; only the position
+    columns are kept here (see ReadForces / ReadForceFile for the force
+    columns from that same block) -- plus the supercell lattice and
+    per-species atom counts, so this can be written out as a POSCAR.
+    """
+    with open(path) as f:
+        lines = [l.strip() for l in f]
+
+    titel_species = []
+    for l in lines:
+        if "TITEL" in l:
+            m = re.search(r'PAW_PBE\s+(\w+)', l)
+            if m and m.group(1) not in titel_species:
+                titel_species.append(m.group(1))
+
+    ions_line_idx = next(i for i, l in enumerate(lines) if "ions per type" in l)
+    counts = list(map(int, lines[ions_line_idx].split("=")[1].split()))
+    N = int(sum(counts))
+    atoms = dict(zip(titel_species, counts))
+
+    # Supercell lattice -- first "direct lattice vectors" block AFTER
+    # "ions per type" (the one printed earlier, from the POTCAR, is the
+    # primitive cell and is the wrong one for a supercell calculation).
+    lat_idx = next(
+        i for i, l in enumerate(lines)
+        if i > ions_line_idx and "direct lattice vectors" in l
+    )
+    lattice = np.array([
+        [float(x) for x in lines[lat_idx + j + 1].split()[:3]]
+        for j in range(3)
+    ])
+
+    force_idxs = [i for i, l in enumerate(lines) if "TOTAL-FORCE" in l]
+    if not force_idxs:
+        raise ValueError(f"No TOTAL-FORCE block found in {path}.")
+    start = force_idxs[-1] + 2   # last occurrence = last ionic step
+    block = np.array([
+        [float(x) for x in lines[start + j].split()]
+        for j in range(N)
+    ])
+    positions = block[:, :3]   # first three columns = geometry
+    return positions, atoms, lattice
+
+  def WriteStructureFile(self, path, positions, format_info):
+    """Writes `positions` back out in the SAME format described by
+    `format_info` (as returned by ReadStructureFile)."""
+    kind = format_info["kind"]
+    if kind == "array":
+        ext = format_info["ext"]
+        if ext == ".npy":
+            np.save(path, positions)
+        elif ext == ".npz":
+            np.savez(path, positions=positions)
+        else:
+            np.savetxt(path, positions)
+    elif kind == "xyz":
+        self._write_xyz(path, positions, format_info["species"], format_info.get("lattice"))
+    elif kind == "poscar":
+        self._write_poscar(path, positions, format_info["atoms"], format_info["lattice"],
+                           format_info.get("comment", "Generated by plumipy"))
+    else:
+        raise ValueError(f"Unknown structure format kind: {kind}")
+
+  def _write_poscar(self, path, positions, atoms, lattice, comment):
+    species = list(atoms.keys())
+    counts = list(atoms.values())
+    if sum(counts) != len(positions):
+        raise ValueError(
+            f"Atom count mismatch: POSCAR species/counts sum to {sum(counts)}, "
+            f"positions has {len(positions)} rows."
+        )
+    lines = [comment or "Generated by plumipy", "   1.0"]
+    for row in lattice:
+        lines.append(f"   {row[0]:.10f}  {row[1]:.10f}  {row[2]:.10f}")
+    lines.append("  " + "  ".join(str(s) for s in species))
+    lines.append("  " + "  ".join(str(int(c)) for c in counts))
+    lines.append("Cartesian")
+    for p in positions:
+        lines.append(f"  {p[0]:.10f}  {p[1]:.10f}  {p[2]:.10f}")
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+  def _write_xyz(self, path, positions, species, lattice):
+    if len(species) != len(positions):
+        raise ValueError(
+            f"Atom count mismatch: {len(species)} species vs {len(positions)} positions."
+        )
+    lines = [str(len(positions))]
+    if lattice is not None:
+        lat_str = " ".join(f"{x:.10f}" for row in lattice for x in row)
+        lines.append(f'Lattice="{lat_str}" Properties=species:S:1:pos:R:3')
+    else:
+        lines.append("")
+    for el, p in zip(species, positions):
+        lines.append(f"{el}  {p[0]:.10f}  {p[1]:.10f}  {p[2]:.10f}")
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+  def ApplyNewtonStep(self, positions, forces, H_inv):
+    """
+    R_new = R + H^-1 F.
+
+    positions, forces: (N,3) Cartesian Angstrom / eV per Angstrom
+    H_inv: (3N,3N), units Angstrom^2/eV (as built by InverseHessian), so the
+    dot product with forces directly in eV/Angstrom yields Angstrom -- no
+    separate unit conversion needed here.
+    """
+    N = positions.shape[0]
+    if H_inv.shape != (3 * N, 3 * N):
+        raise ValueError(
+            f"H_inv shape {H_inv.shape} does not match 3*N_atoms={3*N} "
+            f"implied by the structure file ({N} atoms)."
+        )
+    if forces.shape != positions.shape:
+        raise ValueError(
+            f"forces shape {forces.shape} does not match positions shape "
+            f"{positions.shape}."
+        )
+    disp = (H_inv @ forces.ravel()).reshape(N, 3)
+    return positions + disp
 
 
 

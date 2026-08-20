@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QPushButton, QScrollArea, QButtonGroup, QRadioButton,
-    QDoubleSpinBox, QSpinBox, QComboBox, QCheckBox, QStackedWidget,
+    QDoubleSpinBox, QComboBox, QCheckBox, QStackedWidget,
     QSizePolicy, QFileDialog, QLineEdit
 )
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -685,29 +685,40 @@ class Step3Parameters(QWidget):
         sep4 = QFrame(); sep4.setFrameShape(QFrame.Shape.HLine)
         sep4.setStyleSheet("color:#313244;"); lay.addWidget(sep4)
 
-        # Subtract modes
-        sub_row = QHBoxLayout()
-        sub_lbl = QLabel("Subtract low-frequency modes")
-        sub_lbl.setObjectName("field_label")
-        sub_row.addWidget(sub_lbl)
-        self.subtract = QSpinBox()
-        self.subtract.setRange(0, 100)
-        self.subtract.setValue(0)
-        self.subtract.setFixedWidth(90)
-        sub_row.addWidget(self.subtract)
-        sub_row.addStretch()
-        lay.addLayout(sub_row)
+        # Exclude modes -- same mode-number / energy-range union used by the
+        # Inverse Hessian tool's "Build Inverse Hessian" tab, instead of a
+        # single "drop the first N" count.
+        excl_hdr = QLabel("Exclude Modes")
+        excl_hdr.setObjectName("field_label")
+        lay.addWidget(excl_hdr)
+
+        excl_row1 = QHBoxLayout()
+        excl_row1.addWidget(QLabel("Remove by mode number:"))
+        self.exclude_modes_edit = QLineEdit()
+        self.exclude_modes_edit.setPlaceholderText(
+            "e.g. 1-5, 9-11  (1-based, blank = none)")
+        excl_row1.addWidget(self.exclude_modes_edit)
+        lay.addLayout(excl_row1)
+
+        excl_row2 = QHBoxLayout()
+        excl_row2.addWidget(QLabel("Remove by energy (meV):"))
+        self.exclude_energy_edit = QLineEdit()
+        self.exclude_energy_edit.setPlaceholderText(
+            "e.g. 0-24, 100-110  (blank = none; negative bounds allowed)")
+        excl_row2.addWidget(self.exclude_energy_edit)
+        lay.addLayout(excl_row2)
 
         sub_hint = QLabel(
-            "Removes the N lowest-frequency modes before computing S<sub>k</sub>.<br>"
-            "• <b>0</b> — no removal (default, recommended for periodic solids whose "
-            "acoustic modes are already near zero at Γ)<br>"
-            "• <b>3</b> — remove acoustic/translational modes in periodic supercells "
-            "(3 modes with ω → 0 at Γ)<br>"
-            "• <b>5</b> — remove translational + rotational in <i>linear</i> molecules "
+            "Removes modes before computing S<sub>k</sub> — the union of both fields "
+            "is excluded.<br>"
+            "• blank / blank — no removal (default, recommended for periodic solids "
+            "whose acoustic modes are already near zero at Γ)<br>"
+            "• <b>1-3</b> — remove acoustic/translational modes in periodic supercells "
+            "(3 modes with ω → 0 at Γ, lowest-frequency first)<br>"
+            "• <b>1-5</b> — remove translational + rotational in <i>linear</i> molecules "
             "(3 trans. + 2 rot.)<br>"
-            "• <b>6</b> — remove translational + rotational in <i>non-linear</i> molecules "
-            "(3 trans. + 3 rot.) — standard for cluster/molecular codes"
+            "• <b>1-6</b> — remove translational + rotational in <i>non-linear</i> "
+            "molecules (3 trans. + 3 rot.) — standard for cluster/molecular codes"
         )
         sub_hint.setWordWrap(True)
         sub_hint.setObjectName("hint_label")
@@ -727,7 +738,8 @@ class Step3Parameters(QWidget):
             "sigma_final": self.sigma2.value(),
             "gamma": self.gamma.value(),
             "temperature": self.temp.value(),
-            "subtract_modes": self.subtract.value(),
+            "exclude_modes": self.exclude_modes_edit.text() or None,
+            "exclude_energy": self.exclude_energy_edit.text() or None,
             "sidebands_broadening_lorentzian": self.lorentzian(),
         }
 

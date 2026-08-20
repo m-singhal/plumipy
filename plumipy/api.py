@@ -22,7 +22,8 @@ def calculate_spectra_analytical(
         sidebands_broadening_lorentzian: bool = False, # Whether to use Lorentzian broadening for phonon sidebands/vibrational progressions instead of Gaussian.
         vibrational_freqs_unit: str = "cm^-1", # Unit of the vibrational frequencies provided by the user. Supported units include "cm^-1" and "THz". The function will convert the frequencies to a consistent unit (meV) for internal calculations. This parameter is only relevant if vibrational frequencies are provided. 
         temperature: float | None = 0.0, # Temperature dependence is only included for standard Huang-Rhys theory. Units: Kelvin 
-        subtract_modes: int | None = 0, # Number of low-energy modes to subtract from the phonon/vibrational spectrum. This can be useful to remove translational and rotational modes in molecules or acoustic modes in solids that do not contribute to the optical spectra.
+        exclude_modes: str | None = None, # Modes to exclude by 1-based number before computing Sk, e.g. "1-5, 9-11". Union with exclude_energy. Useful to remove translational/rotational modes in molecules or acoustic modes in solids that do not contribute to the optical spectra.
+        exclude_energy: str | None = None, # Modes to exclude by energy in meV before computing Sk, e.g. "0-24, 100-110". Union with exclude_modes. Negative bounds allowed.
         enable_squeezing: bool = False, # Option to use the "Displaced-Squeezed oscillator" model going beyond Huang-Rhys theory. It gives converges to Huang-Rhys if phonon_gs == phonon_es or vibrational_freqs_gs == vibrational_freqs_es. 
         squeezing_parameter: np.ndarray | None = None, # Squeezing parameter for the more general theory that takes into account the displacement and curvature changes between the ground state and excited state potential energy surfaces. This can result in same spectra as the standard Huang-Rhys theory if the vibrational/phonon frequencies of the ground state and excited state are the same. Units: dimensionless, an array of shape (N_modes,). But usuallt this is not required as it will be calculated automatically. This is just for testing the changes in spectra with user defined squeezing parameters.
         sigma_squeezed: float | None = None, # Gaussian/Lorentzian broadening for the more general formalism that takes into account the displacement and curvature changes between the ground state and excited state potential energy surfaces. This can result in same spectra as the standard Huang-Rhys theory if the vibrational/phonon frequencies of the ground state and excited state are the same.
@@ -231,8 +232,10 @@ def calculate_spectra_analytical(
                 masses, freqs_gs, modes_gs = pl.ReadPhononsVasp(phonons_gs)
             freqs_gs[freqs_gs <= 0] = 1e-6  ## Replace zero or negative frequencies with a small positive value to avoid issues in calculations
             results["masses"] = masses  ## Units: atomic mass units (amu), an array of shape (N_atoms,)
-            results["freqs_gs"] = freqs_gs[subtract_modes:]  ## Units: THz
-            results["modes_gs"] = modes_gs[subtract_modes:,...]  ## Units: dimensionless, an array of shape (N_modes, N_atoms, 3)
+            Ek_gs_full = pl.FreqToEnergy(freqs_gs)  ## Units: meV, unfiltered -- used only to build the exclusion mask
+            keep_gs = ~pl.build_exclusion_mask(Ek_gs_full, exclude_modes, exclude_energy)
+            results["freqs_gs"] = freqs_gs[keep_gs]  ## Units: THz
+            results["modes_gs"] = modes_gs[keep_gs,...]  ## Units: dimensionless, an array of shape (N_modes, N_atoms, 3)
             results["Ek_gs"] = pl.FreqToEnergy(results["freqs_gs"])  ## Units: meV
             results["wk_gs"] = results["Ek_gs"]/results["hbar"]  ## Units: sqrt(meV/AMU)/Angstrom
             results["IPR_gs"] = pl.InverseParticipationRatio(results["modes_gs"])  ## Units: dimensionless, an array of shape (N_modes,)
@@ -246,8 +249,10 @@ def calculate_spectra_analytical(
                 masses, freqs_es, modes_es = pl.ReadPhononsVasp(phonons_es)
             freqs_es[freqs_es <= 0] = 1e-6  ## Replace zero or negative frequencies with a small positive value to avoid issues in calculations
             results["masses"] = masses  ## Units: atomic mass units (amu), an array of shape (N_atoms,)
-            results["freqs_es"] = freqs_es[subtract_modes:]  ## Units: THz
-            results["modes_es"] = modes_es[subtract_modes:,...]  ## Units: dimensionless, an array of shape (N_modes, N_atoms, 3)
+            Ek_es_full = pl.FreqToEnergy(freqs_es)  ## Units: meV, unfiltered -- used only to build the exclusion mask
+            keep_es = ~pl.build_exclusion_mask(Ek_es_full, exclude_modes, exclude_energy)
+            results["freqs_es"] = freqs_es[keep_es]  ## Units: THz
+            results["modes_es"] = modes_es[keep_es,...]  ## Units: dimensionless, an array of shape (N_modes, N_atoms, 3)
             results["Ek_es"] = pl.FreqToEnergy(results["freqs_es"])  ## Units: meV
             results["wk_es"] = results["Ek_es"]/results["hbar"]  ## Units: sqrt(meV/AMU)/Angstrom
             results["IPR_es"] = pl.InverseParticipationRatio(results["modes_es"])  ## Units: dimensionless, an array of shape (N_modes,)
@@ -281,14 +286,16 @@ def calculate_spectra_analytical(
                 raise ValueError("Unsupported file types for vibrational frequencies or modes. Both must be either .npy/.npz or .txt/.dat.")
         else:
             raise ValueError("Unsupported types for vibrational frequencies or modes. Both must be either numpy arrays or file paths.")
-        freqs_vib_gs = freqs_vib_gs[subtract_modes:]
-        modes_vib_gs = modes_vib_gs[subtract_modes:,...]
+        if vibrational_freqs_unit == "cm^-1":
+            Ek_vib_gs_full = 0.12398*freqs_vib_gs  ## Units: meV, unfiltered -- used only to build the exclusion mask
+        elif vibrational_freqs_unit == "THz":
+            Ek_vib_gs_full = pl.FreqToEnergy(freqs_vib_gs)  ## Units: meV, unfiltered
+        keep_vib_gs = ~pl.build_exclusion_mask(Ek_vib_gs_full, exclude_modes, exclude_energy)
+        freqs_vib_gs = freqs_vib_gs[keep_vib_gs]
+        modes_vib_gs = modes_vib_gs[keep_vib_gs,...]
         results["freqs_gs"] = freqs_vib_gs  ## Units: cm^-1
         results["modes_gs"] = modes_vib_gs  ## Units: dimensionless, an array of shape (N_vib_modes, N_atoms, 3)
-        if vibrational_freqs_unit == "cm^-1":
-            results["Ek_gs"] = 0.12398*freqs_vib_gs  ## Units: meV
-        elif vibrational_freqs_unit == "THz":
-            results["Ek_gs"] = pl.FreqToEnergy(freqs_vib_gs)  ## Units: meV
+        results["Ek_gs"] = Ek_vib_gs_full[keep_vib_gs]  ## Units: meV
         results["wk_gs"] = results["Ek_gs"]/results["hbar"]  ## Units: sqrt(meV/AMU)/Angstrom
         results["IPR_gs"] = pl.InverseParticipationRatio(results["modes_gs"])  ## Units: dimensionless, an array of shape (N_modes,)
 

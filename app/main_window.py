@@ -15,6 +15,7 @@ from app.pages.home    import HomePage
 from app.pages.inputs  import InputsPage
 from app.pages.results import ResultsPage
 from app.pages.compare import ComparePage
+from app.pages.inverse_hessian import InverseHessianPage
 
 import sys, os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -56,7 +57,8 @@ class CalcWorker(QObject):
                 gamma                   = cfg.get("gamma", 2.0),
                 sidebands_broadening_lorentzian = cfg.get("sidebands_broadening_lorentzian", False),
                 vibrational_freqs_unit  = cfg.get("vibrational_freqs_unit", "cm^-1"),
-                subtract_modes          = int(cfg.get("subtract_modes", 0)),
+                exclude_modes           = cfg.get("exclude_modes"),
+                exclude_energy          = cfg.get("exclude_energy"),
                 temperature             = cfg.get("temperature", 0.0),
                 enable_squeezing        = cfg.get("enable_squeezing", False),
                 sigma_squeezed          = cfg.get("sigma_squeezed"),
@@ -183,10 +185,11 @@ class MainWindow(QMainWindow):
 
         self._nav_btns = {}
         for key, icon, label in [
-            ("home",    "🏠", "Home"),
-            ("inputs",  "📁", "Inputs"),
-            ("results", "📊", "Results"),
-            ("compare", "⚖",  "Compare"),
+            ("home",     "🏠", "Home"),
+            ("inputs",   "📁", "Inputs"),
+            ("results",  "📊", "Results"),
+            ("compare",  "⚖",  "Compare"),
+            ("hessian",  "🧮", "Inverse Hessian"),
         ]:
             btn = NavButton(icon, label)
             btn.clicked.connect(lambda _, k=key: self._go_to(k))
@@ -240,11 +243,13 @@ class MainWindow(QMainWindow):
         self._inputs_page  = InputsPage()
         self._results_page = ResultsPage()
         self._compare_page = ComparePage()
+        self._hessian_page = InverseHessianPage()
 
         self._stack.addWidget(self._home_page)      # index 0
         self._stack.addWidget(self._inputs_page)    # index 1
         self._stack.addWidget(self._results_page)   # index 2
         self._stack.addWidget(self._compare_page)   # index 3
+        self._stack.addWidget(self._hessian_page)   # index 4
 
         # Navigation / workflow signals
         self._home_page.go_to_inputs.connect(lambda: self._go_to("inputs"))
@@ -260,7 +265,7 @@ class MainWindow(QMainWindow):
         return self._stack
 
     # ── Navigation ────────────────────────────────────────────────────────────
-    _PAGE_IDX = {"home": 0, "inputs": 1, "results": 2, "compare": 3}
+    _PAGE_IDX = {"home": 0, "inputs": 1, "results": 2, "compare": 3, "hessian": 4}
 
     def _go_to(self, key: str):
         self._stack.setCurrentIndex(self._PAGE_IDX[key])
