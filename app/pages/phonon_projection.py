@@ -8,9 +8,10 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QFileDialog, QSpinBox, QDoubleSpinBox,
     QSizePolicy, QTableWidget, QTableWidgetItem, QHeaderView,
-    QScrollArea,
+    QScrollArea, QCheckBox,
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 
 import mplcursors
 
@@ -210,11 +211,28 @@ def map_atoms(pos_p: np.ndarray, pos_d: np.ndarray,
 # ── Projection ────────────────────────────────────────────────────────────────
 
 def compute_projection(data_d: dict, data_p: dict,
-                       d2p: np.ndarray) -> np.ndarray:
+                       d2p: np.ndarray, mass_weighted: bool = True) -> tuple[np.ndarray, np.ndarray]:
     """
     c_sq[k, k'] = |c_{k,k'}|²
 
-    c_{k,k'} = Σ_i  √(m^P_i / m^D_i)  ê^D_{k,i} · ê^P_{k', σ(i)}
+    mass_weighted=True (default) -- projects actual atomic DISPLACEMENTS u:
+        c_{k,k'} = Σ_i  √(m^P_i / m^D_i)  ê^D_{k,i} · ê^P_{k', σ(i)}
+        The physically correct quantity whenever matched atoms can have
+        different masses (isotope substitution, dopants). Σ_k'|c|² is NOT
+        guaranteed to be 1 -- its deviation is itself diagnostic (see below).
+
+    mass_weighted=False -- projects the raw dynamical-matrix eigenvectors e
+    directly, no per-atom mass correction:
+        c_{k,k'} = Σ_i  ê^D_{k,i} · ê^P_{k', σ(i)}
+        With a complete 1:1 atom correspondence (no vacancies/interstitials)
+        this is an exact orthogonal-basis overlap and Σ_k'|c|² = 1 for every
+        mode regardless of any real mass difference -- a linear-algebra
+        guarantee, not a correctness check. A vacancy alone still leaves
+        Σ|c|²=1 exactly (pristine's full mode set still resolves identity on
+        the matched-atom subspace); an interstitial atom genuinely lowers it,
+        to 1 minus that atom's own participation weight in the mode, because
+        pristine's basis has no way to represent displacement that lives on
+        an atom it doesn't have.
 
     Vacancy: ê^D_{k,j} = 0 by construction (skipped via d2p).
     Interstitial: ê^P_{k', j_new} = 0 (pristine has no atom there).
@@ -226,7 +244,7 @@ def compute_projection(data_d: dict, data_p: dict,
     N_D      = modes_d.shape[1]
 
     # Mass correction factor per defect atom
-    if masses_d is not None and masses_p is not None:
+    if mass_weighted and masses_d is not None and masses_p is not None:
         mf = np.zeros(N_D)
         for i in range(N_D):
             j = d2p[i]
@@ -299,6 +317,23 @@ class PhononProjectionWidget(QWidget):
 
         root.addWidget(file_frame)
 
+        # ── Projection type toggle ───────────────────────────────────────
+        self._mass_check = QCheckBox("project displacements: eigenmode/√(atomic masses)")
+        self._mass_check.setChecked(True)
+        self._mass_check.setToolTip(
+            "Checked (default): c_kk' = Σᵢ √(mᵢᴾ/mᵢᴰ) êᴰ·êᴾ — projects actual atomic\n"
+            "displacements u, the physically correct quantity when matched atoms can\n"
+            "have different masses (substitution, isotopes). Σ|c|² need not equal 1;\n"
+            "its deviation is itself diagnostic of defect-localized, mass-mismatched modes.\n\n"
+            "Unchecked: c_kk' = Σᵢ êᴰ·êᴾ — projects the raw dynamical-matrix\n"
+            "eigenvectors e directly, no per-atom mass correction. With a full 1:1 atom\n"
+            "correspondence (no vacancies/interstitials) this is an exact orthogonal-\n"
+            "basis overlap and Σ|c|²=1 for every mode regardless of mass — a linear-\n"
+            "algebra guarantee in this mode, not a correctness check."
+        )
+        self._mass_check.toggled.connect(self._on_mass_weighted_toggled)
+        root.addWidget(self._mass_check)
+
         # ── Control bar ───────────────────────────────────────────────────
         ctrl = QFrame()
         ctrl.setObjectName("info_card")
@@ -336,6 +371,31 @@ class PhononProjectionWidget(QWidget):
         cl.addWidget(self._status_lbl, 1)
 
         root.addWidget(ctrl)
+
+        # ── Mapping summary ──────────────────────────────────────────────
+        self._mapping_lbl = QLabel("")
+        self._mapping_lbl.setObjectName("hint_label")
+        self._mapping_lbl.setStyleSheet("color: gray; font-size: 11px;")
+        self._mapping_lbl.setWordWrap(True)
+        self._mapping_lbl.setVisible(False)
+        root.addWidget(self._mapping_lbl)
+
+        self._mapping_table_check = QCheckBox("Display mapping table")
+        self._mapping_table_check.setChecked(False)
+        self._mapping_table_check.setVisible(False)
+        self._mapping_table_check.toggled.connect(self._on_mapping_table_toggled)
+        root.addWidget(self._mapping_table_check)
+
+        self._mapping_table = QTableWidget(0, 6)
+        self._mapping_table.setHorizontalHeaderLabels(
+            ["Defect atom", "Species", "↔", "Pristine atom", "Species", "dist (Å)"])
+        self._mapping_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._mapping_table.verticalHeader().setVisible(False)
+        self._mapping_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._mapping_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._mapping_table.setMaximumHeight(400)
+        self._mapping_table.setVisible(False)
+        root.addWidget(self._mapping_table)
 
         # ── Hint label ────────────────────────────────────────────────────
         self._hint = QLabel(
@@ -375,7 +435,9 @@ class PhononProjectionWidget(QWidget):
         _inner_layout.addWidget(self._canvas)
 
         # Table label + table (visible only after scrolling down)
-        self._table_lbl = QLabel("Contributing pristine modes  (|c|² > 1×10⁻⁸, sorted by |c|²):")
+        self._table_lbl = QLabel(
+            "Contributing pristine modes  (|c|² > 1×10⁻⁸, sorted by |c|²)  "
+            "— c and |c|² shown normalized by the mode's own Σ|c|² (raw value in plot title):")
         self._table_lbl.setObjectName("hint_label")
         self._table_lbl.setStyleSheet("color: gray; font-size: 11px; padding-top: 4px;")
         self._table_lbl.setVisible(False)
@@ -383,7 +445,7 @@ class PhononProjectionWidget(QWidget):
 
         self._table = QTableWidget(0, 5)
         self._table.setHorizontalHeaderLabels(
-            ["Pristine mode k′", "Energy (meV)", "Freq (THz)", "c", "|c|²"])
+            ["Pristine mode k′", "Energy (meV)", "Freq (THz)", "c (norm.)", "|c|² (norm.)"])
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -405,7 +467,8 @@ class PhononProjectionWidget(QWidget):
         hc_lay = QHBoxLayout(self._hover_card)
         hc_lay.setSpacing(24)
         self._hc: dict[str, QLabel] = {}
-        for key in ["Pristine mode k′", "E_k′ (meV)", "Freq (THz)", "|c|²", "Σ|c|² (all k′)"]:
+        for key in ["Pristine mode k′", "E_k′ (meV)", "Freq (THz)", "|c|² (norm.)",
+                    "Σ|c|² (raw)", "mean E^P", "std E^P"]:
             col = QVBoxLayout(); col.setSpacing(2)
             v = QLabel("—"); v.setObjectName("field_label")
             v.setStyleSheet("color:#cba6f7; font-size:14px; font-weight:bold;")
@@ -547,6 +610,107 @@ class PhononProjectionWidget(QWidget):
 
     # ── Projection ────────────────────────────────────────────────────────
 
+    def _mapping_summary(self, dp: dict, dd: dict, d2p: np.ndarray,
+                          vac: list[int], inter: list[int]) -> str:
+        """Human-readable diagnostic summary of the map_atoms() result."""
+        N_P = len(dp['positions'])
+        N_D = len(dd['positions'])
+        matched = int(np.sum(d2p >= 0))
+        bijection = (N_P == N_D) and (len(vac) == 0) and (len(inter) == 0)
+
+        parts = [
+            "✓ full 1:1 correspondence (3N×3N orthogonal basis)" if bijection
+            else "⚠ incomplete correspondence (padded, not a full 3N×3N basis)"
+        ]
+
+        # Collision check: map_atoms does independent per-atom nearest-neighbour
+        # search with no exclusivity, so two defect atoms CAN claim the same
+        # pristine atom -- that's a real failure mode, not just theoretical.
+        valid = d2p[d2p >= 0]
+        if len(valid) > 0:
+            _, counts = np.unique(valid, return_counts=True)
+            n_collisions = int((counts > 1).sum())
+            if n_collisions > 0:
+                n_claimants = int(counts[counts > 1].sum())
+                parts.append(
+                    f"⚠ {n_collisions} pristine atom(s) claimed by "
+                    f"{n_claimants} defect atoms (many-to-one collision)"
+                )
+
+        # Species agreement at matched sites, when both files carry labels.
+        # A large mismatch count here is the signature of a wrong registration
+        # shift (e.g. map_atoms locking onto the wrong rigid translation).
+        sp_p = dp.get('species')
+        sp_d = dd.get('species')
+        if sp_p is not None and sp_d is not None:
+            same = diff = 0
+            for i, j in enumerate(d2p):
+                if j < 0:
+                    continue
+                if sp_d[i] == sp_p[j]:
+                    same += 1
+                else:
+                    diff += 1
+            if diff > 0:
+                parts.append(f"species: {same} agree, {diff} differ at matched sites")
+            else:
+                parts.append(f"species: all {same} matched sites agree")
+
+        return (
+            f"Mapping — N_P={N_P}  N_D={N_D}  matched={matched}  "
+            f"vacancies={len(vac)}  interstitials={len(inter)}   —   "
+            + "   |   ".join(parts)
+        )
+
+    def _on_mapping_table_toggled(self, checked):
+        self._mapping_table.setVisible(checked)
+
+    def _populate_mapping_table(self, dp: dict, dd: dict, d2p: np.ndarray,
+                                 lat_p: np.ndarray | None, lat_d: np.ndarray | None):
+        """One row per defect atom: which pristine atom it matched to, both
+        species, and the PBC (minimum-image) distance between them -- the
+        same view as the standalone mapping CSVs used earlier."""
+        pos_p = dp['positions']
+        pos_d = dd['positions']
+        sp_p  = dp.get('species')
+        sp_d  = dd.get('species')
+        N_D   = len(pos_d)
+
+        inv_lat = np.linalg.inv(lat_d) if lat_d is not None else None
+
+        self._mapping_table.setRowCount(N_D)
+        for i in range(N_D):
+            j = int(d2p[i])
+            sp_d_i = sp_d[i] if sp_d is not None else "?"
+
+            if j >= 0:
+                sp_p_j = sp_p[j] if sp_p is not None else "?"
+                pristine_str = f"{j + 1}"
+                if inv_lat is not None:
+                    diff = pos_d[i] - pos_p[j]
+                    frac = diff @ inv_lat
+                    frac -= np.round(frac)
+                    dist_str = f"{np.linalg.norm(frac @ lat_d):.4f}"
+                else:
+                    dist_str = "—"
+            else:
+                sp_p_j = "—"
+                pristine_str = "— (interstitial)"
+                dist_str = "—"
+
+            mismatch = sp_p is not None and sp_d is not None and j >= 0 and sp_d_i != sp_p_j
+            vals = [f"{i + 1}", sp_d_i, "↔", pristine_str, sp_p_j, dist_str]
+            for col, val in enumerate(vals):
+                item = QTableWidgetItem(val)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if mismatch:
+                    item.setForeground(QColor(DARK["yellow"]))
+                self._mapping_table.setItem(i, col, item)
+
+        row_h    = self._mapping_table.verticalHeader().defaultSectionSize()
+        header_h = self._mapping_table.horizontalHeader().height()
+        self._mapping_table.setMaximumHeight(min(400, header_h + N_D * row_h + 4))
+
     def _run_projection(self):
         dp = self._data_p
         dd = self._data_d
@@ -556,12 +720,17 @@ class PhononProjectionWidget(QWidget):
             lat_p = dp.get('lattice')
             lat_d = dd.get('lattice')
             d2p, vac, inter = map_atoms(dp['positions'], dd['positions'], lat_p, lat_d)
+            N_P = len(dp['positions'])
             N_D = len(dd['positions'])
             matched = int(np.sum(d2p >= 0))
             self._status_lbl.setText(
-                f"N_P={len(dp['positions'])}  N_D={N_D}  "
+                f"N_P={N_P}  N_D={N_D}  "
                 f"matched={matched}  vacancies={len(vac)}  interstitials={len(inter)}"
             )
+            self._mapping_lbl.setText(self._mapping_summary(dp, dd, d2p, vac, inter))
+            self._mapping_lbl.setVisible(True)
+            self._populate_mapping_table(dp, dd, d2p, lat_p, lat_d)
+            self._mapping_table_check.setVisible(True)
         else:
             # Numeric files: index-based mapping
             N_D = dd['modes'].shape[1]
@@ -573,9 +742,19 @@ class PhononProjectionWidget(QWidget):
                 f"N_P={N_P}  N_D={N_D}  index-based mapping  "
                 f"(no positions available)"
             )
+            self._mapping_lbl.setText(
+                "Mapping: index-based (no atomic positions in these files) — "
+                f"first {n} atoms paired 1:1 by array order only, no geometric verification possible."
+            )
+            self._mapping_lbl.setVisible(True)
+            self._mapping_table.setRowCount(0)
+            self._mapping_table.setVisible(False)
+            self._mapping_table_check.setChecked(False)
+            self._mapping_table_check.setVisible(False)
 
         self._d2p  = d2p
-        self._c, self._c_sq = compute_projection(dd, dp, d2p)   # (N_k_d, N_k_p)
+        self._c, self._c_sq = compute_projection(
+            dd, dp, d2p, mass_weighted=self._mass_check.isChecked())   # (N_k_d, N_k_p)
 
         self._mode_spin.setEnabled(True)
         self._sigma_spin.setEnabled(True)
@@ -583,6 +762,10 @@ class PhononProjectionWidget(QWidget):
         self._scroll_area.setVisible(True)
         self._plot_spectrum()
         self._replot()
+
+    def _on_mass_weighted_toggled(self, _checked):
+        if self._c_sq is not None:
+            self._run_projection()
 
     def _on_mode_changed(self):
         if self._c_sq is not None:
@@ -646,22 +829,29 @@ class PhononProjectionWidget(QWidget):
 
     # ── Projection table ──────────────────────────────────────────────────
 
-    def _update_table(self):
+    def _update_table(self, sum_csq: float):
         k    = self._mode_spin.value() - 1
         row  = self._c_sq[k]
         c_signed = self._c[k]
         Ep, _ = self._energies()
         freqs_thz_p = self._data_p['freqs']
 
+        # Displayed values are normalized by the mode's own actual Sigma|c|^2
+        # (same factor used for mean/std), not assumed == 1 -- see _replot.
+        norm  = sum_csq if sum_csq > 0 else 1.0
+        row_n = row / norm
+        c_n   = c_signed / np.sqrt(norm)
+
         # All modes above numerical noise floor, sorted descending by |c|²
+        # (ordering is unaffected by normalization -- it's a uniform rescale)
         THRESH = 1e-8
         idx    = np.where(row > THRESH)[0]
         srt    = idx[np.argsort(row[idx])[::-1]]
 
         self._table.setRowCount(len(srt))
         for r, ki in enumerate(srt):
-            c2 = float(row[ki])
-            c  = float(c_signed[ki])
+            c2 = float(row_n[ki])
+            c  = float(c_n[ki])
             vals = [f"{ki + 1}", f"{Ep[ki]:.4f}", f"{freqs_thz_p[ki]:.4f}",
                     f"{c:.6f}", f"{c2:.6f}"]
             for col, val in enumerate(vals):
@@ -692,6 +882,17 @@ class PhononProjectionWidget(QWidget):
         Ep, Ed = self._energies()
         sum_csq = float(row.sum())
 
+        # Normalize by the mode's OWN actual Sigma|c|^2 before plotting/
+        # tabulating -- never assumed == 1, since that only holds exactly
+        # for the raw (unweighted) projection with a full atom bijection;
+        # the mass-weighted case can deviate genuinely (and that deviation
+        # is itself diagnostic, so it's kept visible as the RAW Σ|c|² in the
+        # title rather than lost -- only the plotted/tabulated values change).
+        w = row / sum_csq if sum_csq > 0 else row
+        sum_w = float(w.sum())   # == 1 by construction whenever sum_csq > 0
+        mean_Ep = float(np.sum(w * Ep))
+        std_Ep  = float(np.sqrt(np.sum(w * (Ep - mean_Ep) ** 2)))
+
         self._clear_cursor()
         self._hover_card.setVisible(False)
 
@@ -699,16 +900,16 @@ class PhononProjectionWidget(QWidget):
         ax.cla()
 
         # ── Gaussian spectral function ────────────────────────────────────
-        # G(E) = Σ_{k'} |c|² exp(-(E-E_k')²/(2σ²))
-        # Peak at each mode = |c|², so y-axis is shared with scatter.
+        # G(E) = Σ_{k'} w_k' exp(-(E-E_k')²/(2σ²)),  w = normalized |c|²
+        # Peak at each mode = w_k', so y-axis is shared with scatter.
         E_lo = max(0.0, Ep.min() - 6 * sigma)
         E_hi = Ep.max() + 6 * sigma
         E_fine = np.linspace(E_lo, E_hi, 4000)
         gauss = np.zeros_like(E_fine)
         # Only modes above noise floor contribute meaningfully
-        max_val = float(row.max()) if row.max() > 0 else 1.0
-        active  = row > max_val * 1e-5
-        for e_k, c2 in zip(Ep[active], row[active]):
+        max_val = float(w.max()) if w.max() > 0 else 1.0
+        active  = w > max_val * 1e-5
+        for e_k, c2 in zip(Ep[active], w[active]):
             gauss += c2 * np.exp(-0.5 * ((E_fine - e_k) / sigma) ** 2)
 
         ax.fill_between(E_fine, gauss,
@@ -718,12 +919,12 @@ class PhononProjectionWidget(QWidget):
 
         # ── Scatter: only points above 0.5 % of max ──────────────────────
         thresh = max_val * 0.005
-        mask   = row > thresh
+        mask   = w > thresh
         Ep_m   = Ep[mask]
-        row_m  = row[mask]
-        orig_i = np.where(mask)[0]           # indices back into full Ep / row
+        row_m  = w[mask]
+        orig_i = np.where(mask)[0]           # indices back into full Ep / w
 
-        # Marker area ∝ |c|² (linear), max size = 250 pt²
+        # Marker area ∝ w (linear), max size = 250 pt²
         sizes  = row_m / max_val * 250
 
         # Three-tier colour by relative magnitude
@@ -741,15 +942,25 @@ class PhononProjectionWidget(QWidget):
 
         ax.axhline(0, color=DARK["spine"], lw=0.5, zorder=0)
 
+        # Weighted-mean marker: dashed vertical line at mean_Ep, shaded band
+        # spanning +/- one std, so the "where + how spread" of the bulk-mode
+        # decomposition is visible directly on the plot, not just in the title.
+        ax.axvspan(mean_Ep - std_Ep, mean_Ep + std_Ep,
+                  color=DARK["yellow"], alpha=0.06, zorder=0)
+        ax.axvline(mean_Ep, color=DARK["yellow"], lw=1.2, ls="--",
+                  alpha=0.85, zorder=4, label=r"mean $\bar E^P_k$")
+
         freqs_thz_p = self._data_p['freqs']   # THz, aligned with Ep
 
         Ek_str = f"{Ed[k]:.2f} meV" if self._data_d['source'] in ('yaml', 'outcar') \
                  else f"mode {k + 1}"
         ax.set_xlabel(r"Pristine phonon energy  $E_{k'}^P$  (meV)", color=DARK["text"])
-        ax.set_ylabel(r"$|c_{k,k'}|^2$", color=DARK["text"])
+        ax.set_ylabel(r"$|c_{k,k'}|^2$  (normalized)", color=DARK["text"])
         ax.set_title(
             f"Defect mode k={k + 1}  ({Ek_str})  →  pristine basis"
-            f"       Σ|c|² = {sum_csq:.4f}   σ = {sigma:.1f} meV",
+            f"       Σ|c|² (raw) = {sum_csq:.4f}   Σ|c|² (normalized) = {sum_w:.4f}"
+            f"   σ = {sigma:.1f} meV\n"
+            f"mean $E^P$ = {mean_Ep:.2f} meV   std = {std_Ep:.2f} meV",
             color=DARK["text"], fontsize=9,
         )
         ax.set_ylim(bottom=-0.008 * max_val)
@@ -759,7 +970,7 @@ class PhononProjectionWidget(QWidget):
         self._canvas.draw()
 
         # ── Projection table ───────────────────────────────────────────────
-        self._update_table()
+        self._update_table(sum_csq)
 
         # ── Hover ─────────────────────────────────────────────────────────
         self._cursor = mplcursors.cursor(sc, hover=True)
@@ -772,7 +983,7 @@ class PhononProjectionWidget(QWidget):
             sel.annotation.set_text(
                 f"Pristine mode {i + 1}\n"
                 f"Energy: {Ep[i]:.3f} meV\n"
-                f"|c|²: {row[i]:.6f}"
+                f"|c|² (norm.): {w[i]:.6f}"
             )
             sel.annotation.get_bbox_patch().set(
                 fc=DARK["axes_bg"], ec=DARK["spine"], alpha=0.92)
@@ -781,8 +992,10 @@ class PhononProjectionWidget(QWidget):
             hc["Pristine mode k′"].setText(f"#{i + 1}")
             hc["E_k′ (meV)"].setText(f"{Ep[i]:.4f}")
             hc["Freq (THz)"].setText(f"{freqs_thz_p[i]:.4f}")
-            hc["|c|²"].setText(f"{row[i]:.6f}")
-            hc["Σ|c|² (all k′)"].setText(f"{sum_csq:.4f}")
+            hc["|c|² (norm.)"].setText(f"{w[i]:.6f}")
+            hc["Σ|c|² (raw)"].setText(f"{sum_csq:.4f}")
+            hc["mean E^P"].setText(f"{mean_Ep:.2f} meV")
+            hc["std E^P"].setText(f"{std_Ep:.2f} meV")
             card.setVisible(True)
 
         @self._cursor.connect("remove")
